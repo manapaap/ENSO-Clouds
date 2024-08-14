@@ -72,9 +72,13 @@ def main():
     global era5
     # Should be able to do all the processing in main since there isn't too
     # much here
-    era5 = xr.open_dataset('era5_reanal/era5_reanal_new.nc')
+    era5 = xr.open_dataset('era5_reanal/era5_reanal_all.nc')
     # merge 5 and 5T
     era5 = era5.sel(expver=1).combine_first(era5.sel(expver=5))
+    # Subset to paciic
+    min_lat, max_lat, min_lon, max_lon = cz_domain
+    era5 = era5.sel(latitude=slice(min_lat, max_lat), 
+                    longitude=slice(min_lon, max_lon))
     # Remove everything post-2000 to get rid of climate change signal
     era5 = era5.sel(time=slice(None, '2000-01-01'))
     # Mean across time - climatology

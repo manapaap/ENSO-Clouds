@@ -9,10 +9,12 @@ https://podaac.jpl.nasa.gov/dataset/OSCAR_L4_OC_FINAL_V2.0
 import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
-import urllib
 import requests
-from getpass import getpass
-from os import chdir
+from os import chdir, remove
+import cartopy.crs as ccrs
+import threading
+from tqdm import tqdm
+import time
 
 
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
@@ -53,20 +55,114 @@ def files_to_download():
     return links, names
 
 
-def process_file(name):
+def process_file(fpath, domain=cz_domain):
     """
     Opens the downloaded OSCAR file, truncates it to the appropriate domain
     and returns the truncated file
     """
+    min_lat, max_lat, min_lon, max_lon = domain
+    data = xr.open_dataset(fpath)
     
+    # Set index
+    data = data.set_index(latitude='lat')
+    data = data.set_index(longitude='lon')
     
+    # Since we know the day already
+    data = data.drop_vars('time')
+    data['u'] = data.u.squeeze()
+    data['v'] = data.v.squeeze()
+    
+    data = data.sel(latitude=slice(min_lat, max_lat), 
+                    longitude=slice(min_lon, max_lon))
+    
+    return data
+
+
+def plot_waves(era5, every=20):
+    """
+    Plots wind barbs for climatological winds across the equatorial
+    Pacific from ERA5 reanalysis.
+    
+    Plots every n'th observation as specified by "every".
+    Assumes the data is already sliced to a single time step.
+    """
+    global lon2d_subset, lat2d_subset, u_subset, v_subset
+    plt.figure()
+    proj = ccrs.PlateCarree(central_longitude=180)
+    ax = plt.axes(projection=proj)
+    
+    # Remove the time dimension if it's present
+    u = np.asarray(era5.u)
+    v = np.asarray(era5.v)
+    
+    # Create meshgrid for lon and lat
+    lon2d, lat2d = np.meshgrid(era5.longitude, era5.latitude)
+    
+    # Subset the 2D arrays
+    lon2d_subset = lon2d[::every, ::every].T
+    lat2d_subset = lat2d[::every, ::every].T
+    u_subset = u[::every, ::every]
+    v_subset = v[::every, ::every]
+       
+    # Calculate wind magnitude
+    mag = np.hypot(u_subset, v_subset)
+    
+    ax.set_title('Equatorial Pacific Climatological Currents')
+    con = ax.quiver(lon2d_subset, lat2d_subset, u_subset, v_subset,
+                    mag, cmap='viridis', transform=ccrs.PlateCarree())
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    
+    fig = plt.gcf()
+    fig.colorbar(con, fraction=0.015, pad=0.04)
+
+
+def threaded_download(headers, address_list, name_list, pbar):
+    """
+    Threaded process for returning dataarrays that have been composited already
+    """
+    global composite, lock, pbar_lock
+    
+    data = None
+    
+    for link, name in zip(address_list, name_list):
+        response = requests.get(link, headers=headers)
+        
+        if response.status_code == 200:
+            with open(name, 'wb') as f:
+                f.write(response.content)
+                
+            if data is None:
+                data = process_file(name)
+                data.close()
+            else:
+                dataset = process_file(name)
+                data += dataset
+                dataset.close()            
+        else:
+            print(f"Failed to download {link}. Status code: {response.status_code}")
+            continue 
+        
+        # Update the progress bar
+        with pbar_lock:
+            pbar.update(1)
+    
+    # Combine the downloaded data into the composite
+    with lock:
+        if composite is None:
+            composite = data
+        else:
+            composite += data
 
 
 def main():
     links, names = files_to_download()
 
-    # Your generated Earthdata token (Thanks chatgpt)
-    token = ".eyJ0eXBlIjoiVXNlciIsInVpZCI6InNreV9zY2llbnRpc3QiLCJleHAiOjE3Mjg3NzEyNDYsImlhdCI6MTcyMzU4NzI0NiwiaXNzIjoiRWFydGhkYXRhIExvZ2luIn0.f9tZaBtp5-BxuJUaymc7wfPDPmBh5h31ppagKwfWdosHB3dxLHJvzwuRh00hfjAlPjtfEik10nQ9L70gHnhUKDs2KkKLgwtn9ukYYqE_VukuUw_XiIXQWXgl0wso4rJB9wDtATJijjKfa2M1B-Z3VL6lkGVPI1gyoT41c3BEFL0Z9VAL_1W0Rf2Wx8a-uKFtAaSBALAQwkiyYJP3f1SnORGJxX0FnqOX8Zc8deh4LqSLiTRlt9IhvO8qgio_zQzTPiU77macX74NlSB2GxoUsGlrV8tc1czF0SLarT7Cik7sdMgFnVt0MPmQ85-SvcMuZKfy0tmAI-k62RE-aJnDoA"
+    # Your generated Earthdata token
+    with open('obs_scripts/earthdata_key.txt', 'r') as file:
+        token = file.read().rstrip()
 
     # Authorization headers
     headers = {
@@ -74,18 +170,52 @@ def main():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
     }
 
-    for link, name in zip(links, names):
-        response = requests.get(link, headers=headers)
-        
-        if response.status_code == 200:
-            with open(name, 'wb') as f:
-                f.write(response.content)
-                print(f"Downloaded: {name[23:31]}")
-            
-        else:
-            print(f"Failed to download {link}. Status code: {response.status_code}")
-            break
+    global composite, lock, pbar_lock
+    composite = None
+    lock = threading.Lock()
+    pbar_lock = threading.Lock()
 
+    nthreads = 25
+    numfiles = len(links)
+    
+    n_per_thread = numfiles // nthreads
+    extra = numfiles % nthreads
+    
+    threads = []
+    
+    # Initialize the progress bar
+    with tqdm(total=numfiles, desc="Downloading and Processing Files") as pbar:
+        for n in range(nthreads):
+            start_idx = n_per_thread * n
+            end_idx = n_per_thread * (n + 1) if n < nthreads - 1 else\
+                n_per_thread * (n + 1) + extra
+            
+            sub_links = links[start_idx:end_idx]
+            sub_names = names[start_idx:end_idx]
+            
+            thread = threading.Thread(target=threaded_download, 
+                                      args=(headers, sub_links,
+                                            sub_names, pbar))
+            threads.append(thread)
+            thread.start()  # Start the thread
+        
+        for thread in threads:
+            thread.join()
+
+    # Delete all thee downloaded files
+    # for name in names:
+    #    remove(name)
+
+    composite /= numfiles
+    plot_waves(composite)  
+    
+    # Statistics
+    print(f'Mean zonal velocity: {composite.u.mean():.3f} m/s')
+    print(f'Mean meriodional velocity: {composite.v.mean():.3f} m/s')    
+
+    # save file
+    # composite.to_netcdf('misc_data/OSCAR_composite.nc')
+    # We can now grab this data from the saved file easily!
 
 if __name__ == "__main__":
     main()
