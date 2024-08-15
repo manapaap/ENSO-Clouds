@@ -14,7 +14,6 @@ from os import chdir, remove
 import cartopy.crs as ccrs
 import threading
 from tqdm import tqdm
-import time
 
 
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
@@ -86,7 +85,6 @@ def plot_waves(era5, every=20):
     Plots every n'th observation as specified by "every".
     Assumes the data is already sliced to a single time step.
     """
-    global lon2d_subset, lat2d_subset, u_subset, v_subset
     plt.figure()
     proj = ccrs.PlateCarree(central_longitude=180)
     ax = plt.axes(projection=proj)
@@ -203,8 +201,8 @@ def main():
             thread.join()
 
     # Delete all thee downloaded files
-    # for name in names:
-    #    remove(name)
+    for name in names:
+       remove(name)
 
     composite /= numfiles
     plot_waves(composite)  
