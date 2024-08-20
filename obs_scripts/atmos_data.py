@@ -58,7 +58,7 @@ def plot_winds(era5, every=20):
     fig.colorbar(con, fraction=0.015, pad=0.04)
     
 
-def plot_slp(era5):
+def plot_scalar(era5, var, title):
     """
     Contour plot of sea level pressure across the equatorial pacific
     """
@@ -66,13 +66,17 @@ def plot_slp(era5):
     proj = ccrs.PlateCarree(central_longitude=180)
     ax = plt.axes(projection=proj)
     
-    con = ax.contourf(era5.longitude, era5.latitude, era5.msl / 100,
+    if var == 'msl':
+        # Get data in HPa
+        era5[var] /= 100
+    
+    con = ax.contourf(era5.longitude, era5.latitude, era5[var],
              origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
         
     # Optional: Add coastlines, gridlines, etc.
     ax.coastlines()
     ax.gridlines(draw_labels=True)
-    ax.set_title('Equatorial Pacific Climatological Sea Level Pressure')
+    ax.set_title('Equatorial Pacific Climatological ' + title)
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
     
@@ -81,7 +85,21 @@ def plot_slp(era5):
     
     plt.show()
 
+
+def calc_convergence(ds):
+    # Get units in meters
+    dx = 111320 * ds['longitude'].diff('longitude')
+    dy = 111320 * ds['latitude'].diff('latitude')
     
+    # Calculate partial derivatives in-place, without creating large intermediate arrays
+    du_dx = ds['u10'].diff('longitude') / dx
+    dv_dy = ds['v10'].diff('latitude') / dy
+    
+    # Adding derivatives directly, minimizing memory overhead
+    divergence = du_dx + dv_dy
+    return -divergence
+
+
 def main():
     global era5
     # Should be able to do all the processing in main since there isn't too
@@ -95,6 +113,8 @@ def main():
                     longitude=slice(min_lon, max_lon))
     # Mean across time - climatology
     era5 = era5.mean(dim='time', skipna=True)
+    # Low-level convergence
+    era5['conv'] = calc_convergence(era5)
     
     # Mean across domain
     print(f'Mean Zonal Windspeed: {float(era5.u10.mean()):.2f} m/s')
@@ -103,7 +123,14 @@ def main():
     
     # Plots
     plot_winds(era5, every=20)
-    plot_slp(era5)
+    plot_scalar(era5, 'msl', 'Sea Level Pressure')
+    plot_scalar(era5, 'sst', 'Sea Surface Temperature')
+    plot_scalar(era5, 'conv', 'Low Level Convergence')
+    
+    # Let's write these fields as a numpy array so they can be used as initial
+    # conditions; we want SLP, SST
+    np.save('init_conds/sst.npy', era5.sst.data)
+    np.save('init_conds/slp.npy', era5.msl.data)
     
 
 if __name__ == '__main__':

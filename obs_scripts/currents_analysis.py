@@ -12,7 +12,6 @@ import numpy as np
 from os import chdir
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt 
-import metpy.calc as mpcalc
 from metpy.units import units
 
 
@@ -60,23 +59,51 @@ def plot_waves(era5, every=20):
     fig.colorbar(con, fraction=0.015, pad=0.04)
 
 
-def calc_divergence(ocean):
-    """
-    Calculates the divergence of the surface currents using xarray's differentiation
-    """
-    u = ocean.u * units('m/s')
-    v = ocean.v * units('m/s')
+def calc_divergence(ds):
+    # Get units in meters
+    dx = 111320 * ds['longitude'].diff('longitude')
+    dy = 111320 * ds['latitude'].diff('latitude')
     
-    # Calculate the divergence
-    dudx = u.differentiate('longitude') / units('meter')
-    dvdy = v.differentiate('latitude') / units('meter')
+    # Calculate partial derivatives in-place, without creating large intermediate arrays
+    du_dx = ds['u'].diff('longitude') / dx
+    dv_dy = ds['v'].diff('latitude') / dy
     
-    divergence = dudx + dvdy
+    # Adding derivatives directly, minimizing memory overhead
+    divergence = du_dx + dv_dy
+    return divergence
+
+
+def calc_divergence_curve(ds):
+    # Earth's radius in meters
+    R_earth = 6.371e6
+    deg_to_rad = np.pi / 180.0
+    # Convert latitude and longitude to radians
+    latitudes = ds['latitude'] * deg_to_rad
+    longitudes = ds['longitude'] * deg_to_rad
+    
+    # Calculate grid spacing in meters
+    dlat = latitudes.diff('latitude')
+    dlon = longitudes.diff('longitude')
+    
+    # Distance per degree of latitude (constant)
+    dy = R_earth * dlat
+    
+    # Distance per degree of longitude (depends on latitude)
+    # Use the mean latitude between adjacent grid points
+    lat_mid = latitudes.isel(latitude=slice(1, None)) - 0.5 * dlat
+    dx = R_earth * np.cos(lat_mid) * dlon
+    
+    # Calculate partial derivatives
+    du_dx = ds['u'].diff('longitude') / dx
+    dv_dy = ds['v'].diff('latitude') / dy
+    
+    # Compute the divergence
+    divergence = du_dx + dv_dy
     
     return divergence
 
 
-def plot_upwelling(ocean):
+def plot_upwelling(ocean, var='w'):
     """
     Plots the upwelling rate across ocean, as calculated from divergence
     """
@@ -84,7 +111,7 @@ def plot_upwelling(ocean):
     proj = ccrs.PlateCarree(central_longitude=180)
     ax = plt.axes(projection=proj)
     
-    con = ax.contourf(ocean.longitude, ocean.latitude, ocean.w.T,
+    con = ax.contourf(ocean.longitude, ocean.latitude, ocean[var].T,
              origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
         
     # Optional: Add coastlines, gridlines, etc.
@@ -101,38 +128,22 @@ def plot_upwelling(ocean):
     
 
 def main():
-    global ocean, upwell
     ocean = xr.open_dataset('misc_data/OSCAR_composite.nc')
     plot_waves(ocean, 10)
     
     H_1 = 50 # m- surface layer depth, a la Battisti
-    ocean['w'] = H_1 * calc_divergence(ocean)  * units('m')
-    
-    # Remove extreme values
-    cleaned = (np.asarray(ocean.w)).flatten()
-    cleaned = cleaned[~np.isnan(cleaned)]
-    max_val = np.quantile(cleaned, 0.995)
-    min_val = np.quantile(cleaned, 0.005)
-    # Replace the underlying data
-    upwell_data = np.asarray(ocean.w.data)
-    upwell_data[upwell_data > max_val] = max_val
-    upwell_data[upwell_data < min_val] = min_val    
-    
-    ocean.w.data = upwell_data
-    
+    ocean['w'] = -H_1 * calc_divergence(ocean)
+    ocean['w_c'] = -H_1 * calc_divergence_curve(ocean)
     plot_upwelling(ocean)
+    plot_upwelling(ocean, 'w_c')
     
     # Statistics
     print(f'Mean zonal velocity: {ocean.u.mean():.3f} m/s')
     print(f'Mean meriodional velocity: {ocean.v.mean():.3f} m/s')
-    print(f'Mean upwelling velocity: {ocean.w.mean():.3f} m/s')
-    
-    
+    print(f'Mean upwelling velocity: {ocean.w.mean():.10f} m/s')
+    print(f'Mean upwelling velocity (spherical): {ocean.w_c.mean():.10f} m/s')
     
     
 if __name__ == '__main__':
-    main()
-
-
-    
+    main()    
     
