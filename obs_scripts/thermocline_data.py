@@ -22,7 +22,7 @@ from scipy.ndimage import gaussian_filter1d
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
 
-cz_domain = [-30, 30, 120, -80 + 360]
+cz_domain = [-2, 2, 120, -80 + 360]
 
 
 def load_ocean_data(fpath='ocean_props/data/WOA18annAll025.nc', 
@@ -119,7 +119,7 @@ def plot_thermocline(mean_cline, title='', ylabel=''):
 
 def main():
     # Remove the land fill value   
-    
+    global thermocline
     ocean = load_ocean_data()
     thermocline = ocean['ThermoclineDepth'].where(ocean['ThermoclineDepth'] >= 0,
                                                   np.nan)

@@ -15,6 +15,8 @@ Interpolates to a regular grid as defined by Nx/Ny
 
 import xarray as xr
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import gaussian_filter
 
 
 def idealized_sst(Nx, Ny):
@@ -33,33 +35,59 @@ def idealized_sst(Nx, Ny):
     sig = L_y / 4
     gaus_y = gaussian(y_dim, cent, sig)
     
-    sin_x = (1.5) * np.sin(2 * np.pi * x_dim / L_x)
+    sin_x = (5) * np.sin(2 * np.pi * x_dim / L_x)
     
     temp = np.outer(gaus_y, sin_x)
     
-    return temp + 299.21
+    return temp
+
+
+def idealized_sst_cz(Nx, Ny):
+    """
+    idealized initial condition for SST from an old Zebiak paper
+    
+    cosine in x/y
+    """
+    L_x = 17811 * 1000 # m
+    L_y = 6672 * 1000 # m (online lat/lon calculator)
+    
+    # Calibrate Nx/Ny to be around a 3km grid box
+    y_dim = np.linspace(-L_y / 2, L_y / 2, Ny)
+    x_dim = np.linspace(0, L_x, Nx)
+    
+    scale_x = L_x
+    scale_y = L_y
+    
+    cos_y = np.cos(np.pi * y_dim / scale_y)
+    # cos_y = np.ones(Ny)
+    
+    cos_x = (5) * np.cos(np.pi * (x_dim - L_x / 2) / scale_x) 
+    
+    temp = np.outer(cos_y, cos_x)
+    
+    return temp
 
 
 def idealized_winds(Nx, Ny):
     """
     idealized initial condition for winds: a gaussian in u and nothing in v
     """
-    L_x = 17811 * 1000  # m
+    # L_x = 17811 * 1000  # m
     L_y = 6672 * 1000   # m
     
     # Calibrate Nx/Ny to be around a 3km grid box
-    x_dim = np.linspace(0, L_x, Nx)
+    # x_dim = np.linspace(0, L_x, Nx)
     y_dim = np.linspace(0, L_y, Ny)
     x_base = np.ones(Nx)
     
     cent = L_y / 2
-    sig = L_y / 4
+    sig = L_y / 6
     gaus_y = gaussian(y_dim, cent, sig)
     
     u = np.outer(gaus_y, x_base)
     # Normalize the domain so that its maximum value is 1.5
     max_value = np.max(u)
-    u = (u / max_value) * -1.5
+    u = (u / max_value) * -2
     
     v = np.zeros((Ny, Nx))
     
@@ -94,7 +122,7 @@ def get_params():
     params['H0'] = 150 # m
     params['g'] = 5.6 * 10**-2 # m s-2 reduced gravity
     params['c0'] = 2.89 # m s-1
-    params['r'] = 2.5 # years
+    params['r'] = (2.5 * 365.25 * 24 * 3600)**-1 # 2.5 years
     params['Cd'] = 3.2 * 10**-3
     params['rho_ocean'] = 1.026 * 10**3 # kg m-3
     params['H1'] = 50 # m
@@ -116,3 +144,72 @@ def get_params():
     params['domain'] = [-30, 30, 120, -80 + 360]
     
     return params
+
+
+def interp_init_val(fpath, Nx, Ny, smooth=True, sigma=1):
+    """
+    Interpolates the saved numpy data from reanalysis into the new grid
+    for the CZ model
+    
+    Fills nan values with dataset mean, splitting it into left/right to reduce
+    landmass discrepancy
+    """
+    data = np.load(fpath)   
+    
+    L_x = 17811 * 1000  # m
+    L_y = 6672 * 1000   # m
+    # Underlying data dim
+    ny, nx = data.shape
+    
+    left = data[:, :nx//2]
+    right = data[:, nx//2:]
+    
+    l_mean = np.mean(left[~np.isnan(left)])
+    r_mean = np.mean(right[~np.isnan(right)])
+    
+    # assign means
+    data[:, :nx//2][np.isnan(data[:, :nx//2])] = l_mean
+    data[:, nx//2:][np.isnan(data[:, nx//2:])] = r_mean
+    
+    # Get the x/y points
+    x = np.linspace(0, L_x, nx)
+    y = np.linspace(0, L_y, ny)
+    
+    interp = RegularGridInterpolator((y, x), data)
+    
+    # Create our actual grid
+    X = np.linspace(0, L_x, Nx)
+    Y = np.linspace(0, L_y, Ny)
+    X, Y = np.meshgrid(X, Y)
+    
+    newdata = interp((Y, X))   
+    
+    sigma = 1
+    if smooth:
+        newdata = gaussian_filter(newdata, sigma=sigma)
+    
+    return newdata
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

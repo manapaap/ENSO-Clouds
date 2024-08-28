@@ -51,13 +51,9 @@ def calc_Q1(u, v, dx, dy):
     Calculates the "anomalous" term for moisture convergence
     """
     # Compute partial derivatives using central differences
-    du_dx = np.gradient(u, dx, axis=1)
-    dv_dy = np.gradient(v, dy, axis=0)
+    div = calc_div(u, v, dx, dy)
     
-    # Calculate the divergence
-    divergence = du_dx + dv_dy
-    
-    return positive(-p['alpha_eff'] * divergence)
+    return positive(-p['alpha_eff'] * div * p['ca']**2)
 
 
 def calc_Q0_CZ(T_grid):
@@ -68,6 +64,22 @@ def calc_Q0_CZ(T_grid):
     exp_term = (p['Tbar'] - (273.15 + 30)) / (273.15 + 16.7)
     
     return 0.0031 * T_grid * np.exp(exp_term)
+
+
+def calc_Q0_ff(T_grid):
+    """
+    Calculates Q0 using the moditified, non iterated method from Geng and Jin
+    2023 and not the original one
+    """
+    a_q = 7.6 * 10**-6 # m2s-3
+    b_q = 0.5
+    
+    exp_term = 0.0031 * np.exp(b_q * (p['Tbar'] - (273.15 + 30)) / (273.15 + 16.7)) 
+    
+    lin_anomaly = (b_q * T_grid) + (0.5 * (b_q * T_grid)**2) +\
+        ((6**-1) * (b_q * T_grid)**3)
+    
+    return exp_term * lin_anomaly
 
 
 def calc_div(u, v, dx, dy):
@@ -120,17 +132,61 @@ def plot_winds(u, v, every_x=40, every_y=20):
     plt.xlabel('Longitude')
     plt.ylabel('Latitude')
     plt.grid()
+    cbar = plt.colorbar()
+    cbar.ax.set_title('Windspeed (m/s)')
+    
+    fig = plt.gcf()
+    fig.set_size_inches(7.5, 3)
+    
     plt.show()
     
+    
+def plot_scalar(field, title='', scale=''):
+    """
+    plots scalar field over domain
+    """
+    Nx = field.shape[1]
+    Ny = field.shape[0]
+    
+    y_dim = np.linspace(-p['Ly'] / 2, p['Ly'] / 2, Ny)
+    x_dim = np.linspace(0, p['Lx'], Nx)
+        
+    x_dim, y_dim = np.meshgrid(x_dim, y_dim)
+    
+    plt.contourf(x_dim, y_dim, field)
+    cbar = plt.colorbar()
+    cbar.ax.set_title(scale)
+    plt.contour(x_dim, y_dim, field, colors='black')
+    plt.title(title)
+    plt.xlabel('Longitude')
+    plt.ylabel('Latitude')
+    plt.grid()
+    
+    fig = plt.gcf()
+    fig.set_size_inches(7.5, 3)
+    
+    plt.show()    
 
+
+def get_beta_y(Nx, Ny):
+    """
+    Returns beta_y meshgrid for given Nx, Ny
+    """
+    beta_y = np.linspace(-p['Ly'] / 2, p['Ly'] / 2, Ny) *\
+        p['beta']
+    # Stack this in the x-dimention to get the shape we want
+    _, beta_y = np.meshgrid(np.ones(Nx), beta_y)
+
+    return beta_y
+
+    
 def calc_vel(phi, dx, dy):
     """
     Re-calculates the values of u, v depending on the pressure (perturbation?)
-    recieved from phi
+    recieved froirm phi
     
     Remember, numpy indexing means that y is positive downwards
     """
-    global beta_y, dphi_dx, dphi_dy
     Ny = phi.shape[0]
     Nx = phi.shape[1]
     
@@ -139,11 +195,7 @@ def calc_vel(phi, dx, dy):
     # are making this weird
     dphi_dy = -np.gradient(phi, dy, axis=0)
     
-    # Reverse order so beta_y increases northwards
-    beta_y = np.linspace(-1000 * p['Ly'] / 2, 1000 * p['Ly'] / 2, Ny) *\
-        p['beta']
-    # Stack this in the x-dimention to get the shape we want
-    _, beta_y = np.meshgrid(np.ones(Nx), beta_y)
+    beta_y = get_beta_y(Nx, Ny)
     
     # Calculate u
     const = p['epsilon'] * dphi_dx + beta_y * dphi_dy
@@ -152,9 +204,43 @@ def calc_vel(phi, dx, dy):
     v = (dphi_dy - beta_y * u) / p['epsilon']
     
     return u, v
+
+
+def calc_fields_iter(u, v, phi, Qtot, dx, dy, niter=5):
+    """
+    uses Peter's suggestion of Jacobi-style iteration to calculate phi, u, v
+    """
+    Nx = u.shape[1]
+    Ny = u.shape[0]
+
+    beta_y = get_beta_y(Nx, Ny)    
+    
+    for n in range(niter):
+        dphi_dx = np.gradient(phi, dx, axis=1)
+        dphi_dy = np.gradient(phi, dy, axis=0)
         
+        du_dx = np.gradient(u, dx, axis=1)
+        dv_dy = np.gradient(v, dy, axis=0)
+        
+        # Update u/v/phi
+        u = (beta_y * v - dphi_dx) / p['epsilon']
+        v = -(beta_y * v + dphi_dy) / p['epsilon']
+        phi = Qtot -(du_dx + dv_dy) * p['ca']**2
+
+    return phi, u, v
     
     
+
+def calc_stress(u, v):
+    """
+    Uses quadratic drag to calculate and return wind stress in x and y
+    """
+    speed = np.sqrt(u**2 + v**2)
+    
+    tau_x = p['rho_air'] * p['Cd'] * u * speed
+    tau_y = p['rho_air'] * p['Cd'] * v * speed
+    
+    return tau_x, tau_y
     
     
     

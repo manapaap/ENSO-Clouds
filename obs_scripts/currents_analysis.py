@@ -111,7 +111,12 @@ def plot_upwelling(ocean, var='w'):
     proj = ccrs.PlateCarree(central_longitude=180)
     ax = plt.axes(projection=proj)
     
-    con = ax.contourf(ocean.longitude, ocean.latitude, ocean[var].T,
+    data = np.asarray(ocean[var])
+    # Remove extreme values for plotting
+    data[data > 0.0001] = 0.0001
+    data[data < -0.0001] = -0.0001
+    
+    con = ax.contourf(ocean.longitude, ocean.latitude, data.T,
              origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
         
     # Optional: Add coastlines, gridlines, etc.
@@ -128,12 +133,19 @@ def plot_upwelling(ocean, var='w'):
     
 
 def main():
+    global ocean
     ocean = xr.open_dataset('misc_data/OSCAR_composite.nc')
+    
+    min_lat, max_lat, min_lon, max_lon = cz_domain
+    ocean = ocean.sel(latitude=slice(min_lat, max_lat), 
+                      longitude=slice(min_lon, max_lon))
+    
+    
     plot_waves(ocean, 10)
     
     H_1 = 50 # m- surface layer depth, a la Battisti
-    ocean['w'] = -H_1 * calc_divergence(ocean)
-    ocean['w_c'] = -H_1 * calc_divergence_curve(ocean)
+    ocean['w'] = H_1 * calc_divergence(ocean)
+    ocean['w_c'] = H_1 * calc_divergence_curve(ocean)
     plot_upwelling(ocean)
     plot_upwelling(ocean, 'w_c')
     

@@ -131,7 +131,9 @@ def main():
     # conditions; we want SLP, SST
     np.save('init_conds/sst.npy', era5.sst.data)
     np.save('init_conds/slp.npy', era5.msl.data)
-    
+    np.save('init_conds/u.npy', era5.u10.data)
+    np.save('init_conds/v.npy', era5.v10.data)  
+    np.save('init_conds/conv.npy', era5.conv.data)  
 
 if __name__ == '__main__':
     main()
