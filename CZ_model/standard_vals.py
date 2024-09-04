@@ -191,16 +191,49 @@ def interp_init_val(fpath, Nx, Ny, smooth=True, sigma=1):
     return newdata
 
 
+def d_dx_mat(Nx, Ny, dx):
+    """
+    Creates second order diagonal matrix representing 
+    d/dx for a flattened array of
+    Nx * Ny
+    
+    Boundary Conditions must be added later
+    """
+    mat_size = Nx * Ny
+    d_dx = np.diag(-np.ones(mat_size - 1), k=-1) +\
+        np.diag(np.ones(mat_size - 1), k=1)
+    
+    return d_dx / (2 * dx)
 
 
 
+def d_dy_mat(Nx, Ny, dy):
+    """
+    Creates second order diagonal matrix representing d/dy for 
+    a flattened array of
+    Nx * Ny
+    """
+    mat_size = Nx * Ny
+    d_dy = np.diag(-np.ones(mat_size - Nx), k=-Nx) +\
+        np.diag(np.ones(mat_size - Nx), k=Nx)
+    
+    return d_dy / (2 * dy)
 
 
+def d2_dx2_mat(Nx, Ny, dx):
+    """
+    Creates tridiagonal matrix representing d2/dx2 for a flattened array of
+    Nx * Ny
+    """
+    pass
 
 
-
-
-
+def d2_dy2_mat(Nx, Ny, dy):
+    """
+    Creates off-tridiagonal matrix representing d/dy for a flattened array of
+    Nx * Ny
+    """
+    pass
 
 
 
