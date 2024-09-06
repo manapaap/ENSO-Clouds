@@ -13,14 +13,13 @@ chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import CZ_model.atmosphere as atms
 import CZ_model.standard_funcs as shared
 import CZ_model.ocean as ocean
-import time
-
+import scipy.fft
 
 p = shared.get_params()
 
 
-Nx = 300
-Ny = 100
+Nx = 150
+Ny = 50
 
 
 dx = p['Lx'] / Nx
@@ -30,6 +29,7 @@ dt = 24 * 3600 # 1 day
 # Initiate ocean with zeros
 u_ocean = np.zeros((Ny, Nx))
 v_ocean = np.zeros((Ny, Nx))
+
 h = np.zeros((Ny, Nx))
 
 # temp = shared.interp_init_val('init_conds/sst.npy', Nx, Ny, smooth=True,
@@ -43,34 +43,27 @@ Q0 = atms.calc_Q0(temp)
 Q1 = atms.calc_Q1(u, v, dx, dy)
 Qtot = -Q0 + Q1
 
-phi, u, v = atms.solve_atmos_fourier(Qtot, dy)
+d_dy = shared.d_dy_mat(Nx, Ny, dy)
+d2_dy2 = shared.d2_dy2_mat(Nx, Ny, dy)
+
+Q_hat = np.fft.fft(Qtot, axis=1)
+
+phi_operator = atms.phi_operator(Qtot, d_dy, d2_dy2)
+
+# phi_operator, Q_hat = shared.apply_bc_chat(phi_operator, Q_hat)
+
+phi_hat = shared.mat_operator_solve(phi_operator, Q_hat)
+phi = (scipy.fft.ifft(phi_hat, axis=1)).real
+u, v = atms.calc_vel(phi, dx, dy)
 
 
-# d2_dx2 = shared.d2_dx2_mat(Nx, Ny, dx)
-# d2_dy2 = shared.d2_dy2_mat(Nx, Ny, dy)
-# epsilon_mat = np.diag(p['epsilon'] * np.ones(Nx * Ny), k=0)
 
-# phi_operator = epsilon_mat - (p['ca']**2 * p['epsilon']**-1) * (d2_dx2 + d2_dy2)
-
-# phi_operator, Qtot = shared.apply_bc(phi_operator, -Q0 + Q1)
-
-
-
-# phi = shared.mat_operator_solve(phi_operator, Qtot, GPU=False)
-# u, v = atms.calc_winds_iter(u, v, phi, dx, dy)
-
-# vort_like = atms.vorticity_like(u, v, dx, dy)
-
-# Qtot += vort_like
-# Qtot = shared.apply_bc_vect(Qtot)
-
-
-atms.plot_winds(u, v, 15, 7)
+atms.plot_winds(u, v, 10, 5)
 
 tau_x, tau_y = atms.calc_stress(u, v)
 
-u_ocean, v_ocean, h = ocean.calc_currents(dt, u_ocean, v_ocean, h,
-                                          tau_x, tau_y, dx, dy) 
+# u_ocean, v_ocean, h = ocean.calc_currents(dt, u_ocean, v_ocean, h,
+#                                           tau_x, tau_y, dx, dy) 
 
 # atms.plot_winds(u_ocean, v_ocean, 300, 150)
 

@@ -19,11 +19,11 @@ import scipy.fft
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
 
-from CZ_model.standard_vals import get_params
+import CZ_model.standard_funcs as shared
 
 
 # Global parameter values
-p = get_params()
+p = shared.get_params()
 
 
 def calc_Q0(T_grid):
@@ -188,8 +188,7 @@ def calc_vel(phi, dx, dy):
     
     Remember, numpy indexing means that y is positive downwards
     """
-    Ny = phi.shape[0]
-    Nx = phi.shape[1]
+    Ny, Nx = phi.shape
     
     dphi_dx = -np.gradient(phi, dx, axis=1)
     # This shoul be negative but I think numpy direction conventions
@@ -205,22 +204,6 @@ def calc_vel(phi, dx, dy):
     v = (dphi_dy - beta_y * u) / p['epsilon']
     
     return u, v
-
-
-def calc_winds_iter(u, v, phi, dx, dy):
-    """
-    uses Peter's suggestion of Jacobi-style iteration to calculate u, v
-    """
-    beta_y = get_beta_y(*u.shape[::-1])    
-    
-    dphi_dx = np.gradient(phi, dx, axis=1)
-    dphi_dy = np.gradient(phi, dy, axis=0)
-    
-    # Update u/v/phi
-    u = (beta_y * v - dphi_dx) / p['epsilon']
-    v = (-beta_y * u - dphi_dy) / p['epsilon']
-
-    return u, v   
     
 
 def calc_stress(u, v):
@@ -244,58 +227,7 @@ def vorticity_like(u, v, dx, dy):
     term_one = -p['ca']**2 * beta_y * np.gradient(v, dx, axis=1)
     term_two = -p['ca']**2 * np.gradient(beta_y * u, dy, axis=0)
     
-    return (term_one + term_two) / p['epsilon']
-    
-    
-def solve_atmos_fourier(Qt, dy):
-    """
-    Solves for u, v, phi using a fourier transform in x and finite differencing
-    in Y. The boundary condition to be considered is u, v, phi = 0 
-    outside the box
-    """
-    beta_y = get_beta_y(*Qt.shape[::-1])
-    
-    Qt_fft = scipy.fft.fft(Qt, axis=1)
-    
-    Ny, Nx = Qt.shape
-    
-    # get the wavenumbers and turn into a mesh
-    kx = scipy.fft.fftfreq(Nx, d=p['Lx'] / Nx) 
-    kx = np.outer(np.ones(Ny), kx)
-    
-    phi_hat = np.zeros_like(Qt)
-    u_hat = np.zeros_like(Qt)
-    v_hat = np.zeros_like(Qt)
-    
-    for j in range(Ny):
-        if j == 0:
-            phi_hat[j, :] = 0
-            u_hat[j, :] = 0
-            v_hat[j, :] = 0
-        elif j == 1:
-            phi_hat[j] = - 2 * dy * (beta_y[j - 1] * u_hat[j - 1] +\
-                                                 p['epsilon'] * v_hat[j]) 
-            v_hat[j] = - 2 * dy * (p['epsilon'] * phi_hat[j] +\
-                                                p['ca']**2 * 1j * kx[j] *\
-                                                    u_hat[j] - Qt_fft[j])
-            u_hat[j, :] = 0
-        else:
-            phi_hat[j] = phi_hat[j - 2] -\
-                            2 * dy * (beta_y[j - 1] * u_hat[j - 1] +\
-                            p['epsilon'] * v_hat[j]) 
-            v_hat[j] = v_hat[j - 2] - 2 * dy * (p['epsilon'] * phi_hat[j] +\
-                                                p['ca']**2 * 1j * kx[j] *\
-                                                    u_hat[j] - Qt_fft[j])
-            u_hat[j] = (beta_y[j] * v_hat[j] - 1j * kx[j] * phi_hat[j]) /\
-                p['epsilon']
-    
-    # Inverse the fft
-    phi = (scipy.fft.ifft(phi_hat, axis=1)).real
-    u = (scipy.fft.ifft(u_hat, axis=1)).real
-    v = (scipy.fft.ifft(v_hat, axis=1)).real
-    
-    return phi, u, v
-    
+    return (term_one + term_two) / p['epsilon']    
     
     
 def phi_operator(Qt, d_dy, d2_dy2):
@@ -316,21 +248,66 @@ def phi_operator(Qt, d_dy, d2_dy2):
     
     # Lets do this piece-by-piece to help comprehension
     zero_der = (p['ca']**2 + kx**2 / p['epsilon']) - (beta_y**2 * beta_ep_sq *\
-            (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon']
-    zero_der += -2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
+            (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon'] -\
+        2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
     zero_der += p['ca']**2 * p['beta'] * 1j * kx * beta_ep_sq
     # Now for the first derivative
-    first_der = -beta_y * 1j * kx * p['ca']**2 * beta_ep_sq
-    first_der += 2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y * beta_ep_sq**2
-    first_der += p['ca']**2 * beta_y * 1j * beta_ep_sq
+    first_der = 2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y * beta_ep_sq**2
     # FInal component!
-    sec_der = p['ca']**2
+    sec_der = -p['ca']**2 * p['epsilon'] * beta_ep_sq
     
+    # Flatten the arrays to get them in shape
+    zero_der = zero_der.reshape(-1)
+    first_der = first_der.reshape(-1)
+    sec_der = sec_der.reshape(-1)
     # Time to add these together
     operator = np.diag(np.ones_like(d_dy)) * zero_der + d_dy * first_der +\
         d2_dy2 * sec_der
     
     return operator
+
+
+def phi_operator_sin(Qt, d_dy, d2_dy2):
+    """
+    Constructs the linear operator that solves for phi each iteration,
+    using sine transform rather than fourier convention
+    
+    Qt is just taken to get the shape of the system.
+    """
+    Ny, Nx = Qt.shape
+    beta_y = get_beta_y(Nx, Ny)
+    # get the wavenumbers and turn into a mesh
+    kx = shared.dstfreq(Nx, d=p['Lx'] / Nx) 
+    kx = np.outer(np.ones(Ny), kx) 
+    # This denominator is seen often so we will store it
+    beta_ep_sq = (beta_y**2 + p['epsilon']**2)**-1
+    
+    zero_der = (p['ca']**2 + kx**2 / p['epsilon']) - (beta_y**2 * beta_ep_sq *\
+            (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon'] -\
+        2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
+    zero_der += p['ca']**2 * p['beta'] * 1j * kx * beta_ep_sq
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
     
