@@ -67,22 +67,6 @@ def calc_Q0_CZ(T_grid):
     return 0.0031 * T_grid * np.exp(exp_term)
 
 
-def calc_Q0_ff(T_grid):
-    """
-    Calculates Q0 using the moditified, non iterated method from Geng and Jin
-    2023 and not the original one
-    """
-    a_q = 7.6 * 10**-6 # m2s-3
-    b_q = 0.5
-    
-    exp_term = 0.0031 * np.exp(b_q * (p['Tbar'] - (273.15 + 30)) / (273.15 + 16.7)) 
-    
-    lin_anomaly = (b_q * T_grid) + (0.5 * (b_q * T_grid)**2) +\
-        ((6**-1) * (b_q * T_grid)**3)
-    
-    return exp_term * lin_anomaly
-
-
 def calc_div(u, v, dx, dy):
     """
     Calculates the divergence of the flow
@@ -252,7 +236,7 @@ def phi_operator(Qt, d_dy, d2_dy2):
         2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
     zero_der += p['ca']**2 * p['beta'] * 1j * kx * beta_ep_sq
     # Now for the first derivative
-    first_der = 2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y * beta_ep_sq**2
+    first_der = -2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y * beta_ep_sq**2
     # FInal component!
     sec_der = -p['ca']**2 * p['epsilon'] * beta_ep_sq
     
@@ -261,7 +245,7 @@ def phi_operator(Qt, d_dy, d2_dy2):
     first_der = first_der.reshape(-1)
     sec_der = sec_der.reshape(-1)
     # Time to add these together
-    operator = np.diag(np.ones_like(d_dy)) * zero_der + d_dy * first_der +\
+    operator = np.diag(np.ones(Qt.size)) * zero_der + d_dy * first_der +\
         d2_dy2 * sec_der
     
     return operator
@@ -277,17 +261,30 @@ def phi_operator_sin(Qt, d_dy, d2_dy2):
     Ny, Nx = Qt.shape
     beta_y = get_beta_y(Nx, Ny)
     # get the wavenumbers and turn into a mesh
-    kx = shared.dstfreq(Nx, d=p['Lx'] / Nx) 
+    kx = shared.dstfreq(Nx, p['Lx']) 
     kx = np.outer(np.ones(Ny), kx) 
     # This denominator is seen often so we will store it
     beta_ep_sq = (beta_y**2 + p['epsilon']**2)**-1
     
-    zero_der = (p['ca']**2 + kx**2 / p['epsilon']) - (beta_y**2 * beta_ep_sq *\
+    zero_der = (-p['ca']**2 + kx**2 / p['epsilon']) + (beta_y**2 * beta_ep_sq *\
             (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon'] -\
-        2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
-    zero_der += p['ca']**2 * p['beta'] * 1j * kx * beta_ep_sq
+        2 * p['ca']**2 * p['beta'] * beta_y**2 * kx * beta_ep_sq**2
+    zero_der += p['ca']**2 * p['beta'] * kx * beta_ep_sq
+    # Now for the first derivative
+    first_der = -2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y *\
+        beta_ep_sq**2
+    # FInal component!
+    sec_der = -p['ca']**2 * p['epsilon'] * beta_ep_sq
     
+    # Flatten the arrays to get them in shape
+    zero_der = zero_der.reshape(-1)
+    first_der = first_der.reshape(-1)
+    sec_der = sec_der.reshape(-1)
+    # Time to add these together
+    operator = np.diag(np.ones(Qt.size)) * zero_der + d_dy * first_der +\
+        d2_dy2 * sec_der
     
+    return operator
     
     
     

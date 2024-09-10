@@ -13,7 +13,7 @@ from os import chdir
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
 
-from CZ_model.standard_vals import get_params
+from CZ_model.standard_funcs import get_params
 
 
 # Global parameter values
