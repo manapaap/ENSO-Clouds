@@ -47,14 +47,17 @@ def positive(grid):
     return grid
 
 
-def calc_Q1(u, v, dx, dy):
+def calc_Q1(u, v, dx, dy, conv=None):
     """
     Calculates the "anomalous" term for moisture convergence
     """
     # Compute partial derivatives using central differences
     div = calc_div(u, v, dx, dy)
-    
-    return positive(-p['alpha_eff'] * div * p['ca']**2)
+    if conv is None:
+        return p['alpha_eff'] * positive(-div) * p['ca']**2
+    else:
+        tot = positive(conv - div) - positive(conv)
+        return p['alpha_eff'] * tot * p['ca']**2
 
 
 def calc_Q0_CZ(T_grid):
@@ -199,109 +202,95 @@ def calc_stress(u, v):
     tau_x = p['rho_air'] * p['Cd'] * u * speed
     tau_y = p['rho_air'] * p['Cd'] * v * speed
     
-    return tau_x, tau_y
-    
-    
-def vorticity_like(u, v, dx, dy):
-    """
-    Calculates the vorticity-like terms that modify Qt during each iteration
-    """
-    beta_y = get_beta_y(*u.shape[::-1])
-    
-    term_one = -p['ca']**2 * beta_y * np.gradient(v, dx, axis=1)
-    term_two = -p['ca']**2 * np.gradient(beta_y * u, dy, axis=0)
-    
-    return (term_one + term_two) / p['epsilon']    
-    
-    
-def phi_operator(Qt, d_dy, d2_dy2):
-    """
-    Constructs the linear operator that solves for phi each iteration
-    
-    Qt is just taken to get the shape of the system. 
-    """
-    Ny, Nx = Qt.shape
-    beta_y = get_beta_y(Nx, Ny)
-    
-    # get the wavenumbers and turn into a mesh
-    kx = scipy.fft.fftfreq(Nx, d=p['Lx'] / Nx) 
-    kx = np.outer(np.ones(Ny), kx) 
-    
-    # This denominator is seen often so we will store it
-    beta_ep_sq = (beta_y**2 + p['epsilon']**2)**-1
-    
-    # Lets do this piece-by-piece to help comprehension
-    zero_der = (p['ca']**2 + kx**2 / p['epsilon']) - (beta_y**2 * beta_ep_sq *\
-            (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon'] -\
-        2 * p['ca']**2 * p['beta'] * beta_y**2 * 1j * kx * beta_ep_sq**2
-    zero_der += p['ca']**2 * p['beta'] * 1j * kx * beta_ep_sq
-    # Now for the first derivative
-    first_der = -2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y * beta_ep_sq**2
-    # FInal component!
-    sec_der = -p['ca']**2 * p['epsilon'] * beta_ep_sq
-    
-    # Flatten the arrays to get them in shape
-    zero_der = zero_der.reshape(-1)
-    first_der = first_der.reshape(-1)
-    sec_der = sec_der.reshape(-1)
-    # Time to add these together
-    operator = np.diag(np.ones(Qt.size)) * zero_der + d_dy * first_der +\
-        d2_dy2 * sec_der
-    
-    return operator
+    return tau_x, tau_y 
 
 
-def phi_operator_sin(Qt, d_dy, d2_dy2):
+def v_operator(Nx, Ny, dx, dy):
     """
-    Constructs the linear operator that solves for phi each iteration,
-    using sine transform rather than fourier convention
-    
-    Qt is just taken to get the shape of the system.
+    Constructs the  invarient operator used to solve for 
+    meridional velocity each iteration of atmosphere
     """
-    Ny, Nx = Qt.shape
     beta_y = get_beta_y(Nx, Ny)
-    # get the wavenumbers and turn into a mesh
-    kx = shared.dstfreq(Nx, p['Lx']) 
-    kx = np.outer(np.ones(Ny), kx) 
-    # This denominator is seen often so we will store it
-    beta_ep_sq = (beta_y**2 + p['epsilon']**2)**-1
     
-    zero_der = (-p['ca']**2 + kx**2 / p['epsilon']) + (beta_y**2 * beta_ep_sq *\
-            (p['ca']**2 + kx**2 / p['epsilon'])) + p['epsilon'] -\
-        2 * p['ca']**2 * p['beta'] * beta_y**2 * kx * beta_ep_sq**2
-    zero_der += p['ca']**2 * p['beta'] * kx * beta_ep_sq
-    # Now for the first derivative
-    first_der = -2 * p['ca']**2 * p['epsilon'] * p['beta'] * beta_y *\
-        beta_ep_sq**2
-    # FInal component!
-    sec_der = -p['ca']**2 * p['epsilon'] * beta_ep_sq
+    d_dx = shared.d_dx_mat(Nx, Ny, dx)
+    d2_dy2 = shared.d2_dy2_mat(Nx, Ny, dy)
+    d2_dx2 = shared.d2_dx2_mat(Nx, Ny, dx)
+    eye = np.diag(np.ones(Ny * Nx))
     
-    # Flatten the arrays to get them in shape
-    zero_der = zero_der.reshape(-1)
-    first_der = first_der.reshape(-1)
-    sec_der = sec_der.reshape(-1)
-    # Time to add these together
-    operator = np.diag(np.ones(Qt.size)) * zero_der + d_dy * first_der +\
-        d2_dy2 * sec_der
+    # Construct the v-operator piecewise
+    linear = (beta_y**2 + p['epsilon']**2) / p['ca']**2
+    linear = eye * linear.reshape(-1) * p['epsilon']
+    lap = -p['epsilon'] * (d2_dy2 + d2_dx2)
+    first = -p['beta'] * d_dx
+
+    v_operator = linear + lap + first
+    return v_operator
+
+
+def v_rhs(Qtot, dx, dy):
+    """
+    Creates the right hand side column for solving for velocity
+    with a given value of Qtot
     
-    return operator
+    Must be updated for each iteration of convergence
+    
+    Qtot = -Q0 + Q1
+    """
+    beta_y = get_beta_y(*Qtot.shape[::-1])
+    LHS_v = -p['epsilon'] * np.gradient(Qtot, dy, axis=0) / p['ca']**2
+    # include the PV-heating term?
+    LHS_v += beta_y * np.gradient(Qtot, dx, axis=1) / p['ca']**2
+    
+    return LHS_v
+
+
+def phi_operator(Nx, Ny, dx, dy):
+    """
+    Invariant operator that acts on phi for each atmosphere iteration    
+    """
+    beta_y = get_beta_y(Nx, Ny)
+    
+    d_dx = shared.d_dx_mat(Nx, Ny, dx)
+    d2_dy2 = shared.d2_dy2_mat(Nx, Ny, dy)
+    d2_dx2 = shared.d2_dx2_mat(Nx, Ny, dx)
+    eye = np.diag(np.ones(Ny * Nx))
+    
+    op = (p['epsilon']**2 + beta_y**2).reshape(-1) * eye / p['epsilon'] +\
+        (p['ca']**2 * p['beta'] / p['epsilon']**2) * d_dx -\
+         (p['ca']**2 / p['epsilon']) * (d2_dy2 + d2_dx2)
+    
+    return op
+
+
+def phi_rhs(Qtot, v, dx, dy):
+    """
+    Right hand side "solution" to solve for phi with the operator
+    
+    Must be updated each iteration of convergence based on Qtot
+    """
+    beta_y = get_beta_y(*Qtot.shape[::-1])
+    rhs = (1 + (beta_y / p['epsilon'])**2) * Qtot + 2 * p['ca']**2 *\
+            p['beta'] * beta_y * v * p['epsilon']**-2
+     
+    return rhs
     
     
+def idealized_conv(Nx, Ny):
+    """
+    Idealized convergence field represenging the ITCZ
+    between step_y=0.5 and y=1.5, from Zebiak 1986
+    """
+    y_step = p['Lx'] / 12
+    y_axis = np.linspace(-p['Ly'] / 2, p['Ly'] / 2, Ny)
+    div_field = np.zeros(Ny)
     
+    div_field[y_axis < 0.3 * y_step] = 2 * 10**-6
+    div_field[y_axis >= 0.3 * y_step] = -6 * 10**-6
+    div_field[y_axis > 1 * y_step] = 2 * 10**-6
     
+    _, div_field = np.meshgrid(np.ones(Nx), div_field)
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    return -div_field
     
     
     
