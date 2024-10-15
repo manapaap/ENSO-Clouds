@@ -346,7 +346,6 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
             
 
 def main():
-    global nino_idx, el_nino, la_nina, neutral
     nino_idx = load_nino_idx('misc_data/nino_all.csv')
     plot_enso(nino_idx)
     

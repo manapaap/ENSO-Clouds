@@ -72,6 +72,8 @@ def plot_scalar(era5, var, title):
     
     con = ax.contourf(era5.longitude, era5.latitude, era5[var],
              origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
+    #ax.contour(era5.longitude, era5.latitude, era5[var],
+    #         origin='lower', transform=ccrs.PlateCarree(), colors='black')
         
     # Optional: Add coastlines, gridlines, etc.
     ax.coastlines()

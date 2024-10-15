@@ -13,8 +13,6 @@ Solution method: TBD (probably spectral)
 import numpy as np
 import matplotlib.pyplot as plt
 from os import chdir
-import scipy.fft
-
 
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
@@ -33,7 +31,7 @@ def calc_Q0(T_grid):
     takes SST grid, returns Q0 grid
     """
     first_term = p['gamma'] * p['ca']**2 * np.sqrt(2 * p['beta'] / p['ca'])
-    second = T_grid * (p['Tref'] / p['Tbar'])**2
+    second = (T_grid) * (p['Tref'] / p['Tbar'])**2
     inside_exp = p['b'] * (p['Tref']**-1 - p['Tbar']**-1)
     
     return first_term * second * np.exp(inside_exp)
@@ -50,14 +48,17 @@ def positive(grid):
 def calc_Q1(u, v, dx, dy, conv=None):
     """
     Calculates the "anomalous" term for moisture convergence
+    
+    conv is mean convergence field defined over same area
     """
     # Compute partial derivatives using central differences
     div = calc_div(u, v, dx, dy)
+    scale = p['alpha_eff'] * p['ca']**2
     if conv is None:
-        return p['alpha_eff'] * positive(-div) * p['ca']**2
+        return positive(-div) * scale
     else:
         tot = positive(conv - div) - positive(conv)
-        return p['alpha_eff'] * tot * p['ca']**2
+        return tot * scale
 
 
 def calc_Q0_CZ(T_grid):

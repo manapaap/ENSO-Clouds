@@ -13,7 +13,6 @@ chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import CZ_model.atmosphere as atms
 import CZ_model.standard_funcs as shared
 import CZ_model.ocean as ocean
-import scipy.fft
 
 
 p = shared.get_params()
@@ -33,21 +32,21 @@ v_ocean = np.zeros((Ny, Nx))
 
 h = np.zeros((Ny, Nx))
 
-temp = shared.interp_init_val('init_conds/sst.npy', Nx, Ny, smooth=True,
-                               sigma=5)
-temp -= p['Tbar']
+# temp = shared.interp_init_val('init_conds/sst.npy', Nx, Ny, smooth=True,
+#                               sigma=10)[::-1]
+# temp -= p['Tbar']
 
 # Get climatological convergence
 conv = shared.interp_init_val('init_conds/conv.npy', Nx, Ny, smooth=True,
-                              sigma=5)
+                              sigma=10)[::-1]
 # we need to flip this to make it obey our sign conventions
-conv = conv[::-1]
+# conv = None
 
 # Idealized convergence?
 conv = atms.idealized_conv(Nx, Ny)
 
 # Initiate variables
-# temp = shared.idealized_sst_cz(Nx, Ny)
+temp = shared.idealized_sst_cz(Nx, Ny)
 Q0 = atms.calc_Q0(temp)
 Qtot = -Q0
 
@@ -55,14 +54,14 @@ Qtot = -Q0
 # Invariants
 phi_operator = atms.phi_operator(Nx, Ny, dx, dy)
 v_operator = atms.v_operator(Nx, Ny, dx, dy)
-beta_y = atms.get_beta_y(Nx, Ny)
+beta_y = atms.get_beta_y(Nx, Ny)    
 # Loop conditions
 u_prev = np.nan
 v_prev = np.nan
 # Tolerance for convergence
 tol = 0.001
 
-for n in range(500):
+for n in range(50):
     # This will skip applying the BCs to the operators after the first iter
     # Not perfect but removes 80% of the redundancy
     LHS_v = atms.v_rhs(Qtot, dx, dy)
@@ -76,8 +75,8 @@ for n in range(500):
     # Simple for u
     u = -(p['epsilon'] * v + np.gradient(phi, dy, axis=0)) / beta_y
     # Update Qtot and continue the loop
-    Q1 = atms.calc_Q1(u, v, dx, dy, conv=None)
-    Qtot = -Q0 + Q1
+    Q1 = atms.calc_Q1(u, v, dx, dy, conv=conv.copy())
+    Qtot = -Q0 - Q1
     # Loop break conditions
     if abs(np.mean(u_prev - u) + np.mean(v_prev - v)) < tol:
         break
