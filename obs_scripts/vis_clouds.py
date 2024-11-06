@@ -40,6 +40,69 @@ def load_nino_idx(fpath):
     return data
 
 
+def load_oni_idx(fpath='misc_data/oni_index.txt'):
+    """
+    Loads ONI index rather than the nino 3.4 index
+    """
+    oni_df = pd.read_csv(fpath, sep='  ', skiprows=1, 
+                         names=['season', 'year', 'oni', 'anom'])
+    months = oni_df.season.str.slice(0, 3)
+    years = oni_df.season.str.slice(4, 10)
+    # Fix the weird offset
+    oni_df['anom'] = oni_df['oni'].astype(float)
+    oni_df['total'] = oni_df['year'].astype(int)
+    oni_df['season'] = months
+    oni_df['year'] = years.astype(float)
+    
+    season_to_month = {
+        "DJF": "01",  # January
+        "JFM": "02",  # February
+        "FMA": "03",  # March
+        "MAM": "04",  # April
+        "AMJ": "05",  # May
+        "MJJ": "06",  # June
+        "JJA": "07",  # July
+        "JAS": "08",  # August
+        "ASO": "09",  # September
+        "SON": "10",  # October
+        "OND": "11",  # November
+        "NDJ": "12"   # December
+    }
+    oni_df['month'] = oni_df['season'].map(season_to_month)
+    oni_df['time'] = pd.to_datetime(oni_df['year'].astype(str).str.slice(0, 4) +\
+                                    '-' + oni_df['month'].astype(str), format='%Y-%m')
+    
+    return oni_df
+
+
+def is_enso_oni(oni_df, date, cutoff=0.5, out=False):
+    """
+    determines if given month (as provided by date) is El Nino, La Nina, or
+    neutral depending on oni index
+    """
+    # Convert the date to a datetime object and get the 5-month window
+    date = pd.to_datetime(date, format='%Y.%m')
+    # date_start = date - pd.DateOffset(months=5)
+
+    # Select the relevant 5-month window
+    vals = oni_df.loc[(oni_df['time'] <= date) &\
+                      (oni_df['time'] >= date)]
+    
+    # Determine ENSO phase based on cutoff value
+    if (vals['anom'] >= cutoff).all():
+        state = 'El Nino'
+    elif (vals['anom'] <= -cutoff).all():
+        state = 'La Nina'
+    else: 
+        state = 'Neutral'
+    
+    # Optionally print the ENSO state
+    if out:
+        print(state)
+    
+    return state
+    
+
 def load_cloud_file(fpath, domain=cz_domain):
     """
     Loads the cloud data file, cropping it to the CZ model region
@@ -201,51 +264,71 @@ def plot_map(cloud_type, var='cldamt', central_longitude=180, title='deep',
     plt.show()
 
 
-def plot_enso(nino):
+def plot_enso(nino, var='3.4_anom', cutoff=0.4):
     """
     Creates a plot of the nino 3.4 index and cutoffs
     """
     plt.figure()
-    plt.plot(nino['time'], nino['3.4_anom'], color='black')
-    plt.hlines(0.4, xmin=nino['time'][0], xmax=nino['time'].iloc[-1],
+    plt.plot(nino['time'], nino[var], color='black')
+    plt.hlines(cutoff, xmin=nino['time'].iloc[0], xmax=nino['time'].iloc[-1],
                linestyle='dashed', alpha=0.8, color='grey')
-    plt.hlines(-0.4, xmin=nino['time'][0], xmax=nino['time'].iloc[-1],
+    plt.hlines(-cutoff, xmin=nino['time'].iloc[0], xmax=nino['time'].iloc[-1],
                linestyle='dashed', alpha=0.8, color='grey')
     plt.xlabel('Years')
     plt.ylabel('Nino 3.4 anomaly')
     plt.title('Nino 3.4 Index')
     plt.grid()    
     ax = plt.gca()
-    ax.fill_between(nino['time'], 0.4, nino['3.4_anom'], 
-                    where=nino['3.4_anom'] > 0.4,
+    ax.fill_between(nino['time'], cutoff, nino[var], 
+                    where=nino[var] > cutoff,
                     alpha=0.6, color='red')
-    ax.fill_between(nino['time'], -0.4, nino['3.4_anom'], 
-                    where=nino['3.4_anom'] < -0.4,
+    ax.fill_between(nino['time'], -cutoff, nino[var], 
+                    where=nino[var] < -0.4,
                     alpha=0.6, color='blue')
     plt.show()
     
 
-def is_enso(nino_idx, date, out=False):
+def is_enso(nino_idx, date, out=False, cutoff=0.5):
     """
-    Given a date, tells you if the date is in neurral, el nino, or la nina
-    phase of enso. Uses nino 3.4 definition
+    Given a date, tells you if the date is in neutral, El Nino, or La Nina
+    phase of ENSO. Uses the Nino 3.4 index with a 5-month consecutive cutoff.
     
-    Date format- %Y-%m
+    Parameters:
+    - nino_idx : DataFrame containing the 'time' and '3.4_anom' columns
+    - date : str, date in format '%Y-%m' to check ENSO status for
+    - out : bool, if True, prints the ENSO state
+    - cutoff : float, anomaly threshold for El Nino and La Nina
+    
+    Returns:
+    - state : str, 'El Nino', 'La Nina', or 'Neutral'
     """
+    # Convert the date to a datetime object and get the 5-month window
     date = pd.to_datetime(date, format='%Y.%m')
-    
-    vals = nino_idx.loc[(nino_idx['time'] <= date) & (nino_idx['time'] >= date)]
+    date_start = date - pd.DateOffset(months=4)  # Use 4 months back to include the current month
 
-    if vals['3.4_anom'].iloc[0] >= 0.4:
+    # Select the relevant 5-month window
+    vals = nino_idx.loc[(nino_idx['time'] <= date) & (nino_idx['time'] >= date_start)]
+    
+    # Check if we have 5 months of data (to avoid errors near the start of dataset)
+    if len(vals) < 5:
+        if out:
+            print("Insufficient data for 5-month analysis")
+        return None  # or raise an exception, or handle as you prefer
+
+    # Determine ENSO phase based on cutoff value
+    if (vals['3.4_anom'] >= cutoff).all():
         state = 'El Nino'
-    elif vals['3.4_anom'].iloc[0] <= -0.4:
+    elif (vals['3.4_anom'] <= -cutoff).all():
         state = 'La Nina'
     else: 
         state = 'Neutral'
     
+    # Optionally print the ENSO state
     if out:
         print(state)
+    
     return state
+
 
 
 def get_fnames(dirpath, season):
@@ -348,6 +431,8 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
 def main():
     nino_idx = load_nino_idx('misc_data/nino_all.csv')
     plot_enso(nino_idx)
+    oni_idx = load_oni_idx('misc_data/oni_index.txt')
+    plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5)
     
     # cloud_ex = load_cloud_file('ISCCP_clouds/2015.12.nc')   
     _, cloud_dict = isccp_cloud_dict()

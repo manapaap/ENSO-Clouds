@@ -217,10 +217,9 @@ def animate_radiation(sel_var, title='', units=''):
 
 
 def main():
+    global ceres
     nino_idx = load_nino_idx('misc_data/nino_all.csv')
     plot_enso(nino_idx)
-    
-    global ceres
     ceres = xr.load_dataset('misc_data/CERES_radiation.nc')
     
     # This is net surface radiation, really the only thing we care for

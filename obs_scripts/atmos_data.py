@@ -58,7 +58,7 @@ def plot_winds(era5, every=20):
     fig.colorbar(con, fraction=0.015, pad=0.04)
     
 
-def plot_scalar(era5, var, title):
+def plot_scalar(era5, var, title='', lims=None):
     """
     Contour plot of sea level pressure across the equatorial pacific
     """
@@ -71,7 +71,7 @@ def plot_scalar(era5, var, title):
         era5[var] /= 100
     
     con = ax.contourf(era5.longitude, era5.latitude, era5[var],
-             origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
+             origin='lower', transform=ccrs.PlateCarree(central_longitude=180), cmap='viridis')
     #ax.contour(era5.longitude, era5.latitude, era5[var],
     #         origin='lower', transform=ccrs.PlateCarree(), colors='black')
         
@@ -81,7 +81,12 @@ def plot_scalar(era5, var, title):
     ax.set_title('Equatorial Pacific Climatological ' + title)
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
-    
+    if lims is not None:
+        # ax.set_ylim(lims[0], lims[1])
+        # ax.set_xlim(lims[3], lims[4])
+        ax.set_extent([lims[2], lims[3], lims[0], lims[1]], 
+                      crs=ccrs.PlateCarree(central_longitude=180))
+        ax.set_xlim(left=lims[3], right=lims[2])
     fig = plt.gcf()
     fig.colorbar(con, fraction=0.02, pad=0.04)   
     
