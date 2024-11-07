@@ -16,6 +16,10 @@ import xarray as xr
 import os
 import pandas as pd
 import cartopy.crs as ccrs
+import calendar
+# To make xesmf load correctly
+# os.environ['ESMFMKFILE'] = 'C:/Users/aakas/anaconda3/envs/[envname]/lib/esmf.mk'
+# import xesmf as xe
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # We need to do the same thing as with the CERES data where annual
@@ -42,9 +46,9 @@ def mean_year(xr_array):
     climatology = xr_array.isel(time=slice(0, 12)).copy()
 
     # Sum each 12-month slice (each year) incrementally to avoid memory overload
-    for n in range(12, len(xr_array.time) - 9, 12):
-        # Sibtract 9 to prefent computation of the incomplete year (2024)
-        # progress_bar(n, len(xr_array.time), 'Calcuting Climatlogy')
+    for n in range(12, 12 * (len(xr_array.time) // 12), 12):
+        # Floor division then multiplication to only capture full years
+        progress_bar(n, len(xr_array.time), 'Calcuting Climatlogy')
         climatology = iterated_sum(climatology, xr_array.isel(time=slice(n, n + 12)))
 
     # Divide by the total number of years to get the mean climatological year
@@ -79,8 +83,8 @@ def reorder_year_dim(ds, mode="May"):
 def enso_composite(xr_array, nino_idx, print_num=False, small=False):
     """
     Creates three composites- one for Neutral conditions, one for El Nino,
-    and one for La Nina. Then subtracts the climatological year from this 
-    to get anomaly fields for these three phases. 
+    and one for La Nina. Returns each of these composites along with 
+    the climatological year
     """
     # Faster and simpler calculation if ceres as it works
     if small:
@@ -128,15 +132,15 @@ def enso_composite(xr_array, nino_idx, print_num=False, small=False):
     # Safeguard against zero divisions
     if el_nino is not None:
         el_nino /= num_el_nino
-        el_nino = el_nino.sortby("month") - climatology
+        # el_nino = el_nino.sortby("month") - climatology
         # el_nino.groupby('time.month').mean(dim='time')
     if la_nina is not None:
         la_nina /= num_la_nina
-        la_nina = la_nina.sortby("month") - climatology
+        # la_nina = la_nina.sortby("month") - climatology
         # la_nina.groupby('time.month').mean(dim='time')
     if neutral is not None:
         neutral /= num_neutral
-        neutral = neutral.sortby("month") - climatology
+        # neutral = neutral.sortby("month") - climatology
         # neutral.groupby('time.month').mean(dim='time')
     
     if print_num:
@@ -144,7 +148,10 @@ def enso_composite(xr_array, nino_idx, print_num=False, small=False):
               f' {num_neutral} Neutral years')
     
     # Store this as a dict so it is managable
-    comps = {'el_nino': el_nino, 'la_nina': la_nina, 'neutral': neutral}
+    comps = {'el_nino': el_nino.sortby("month"),
+             'la_nina': la_nina.sortby("month"), 
+             'neutral': neutral.sortby("month"),
+             'clim': climatology}
     
     return comps
 
@@ -175,7 +182,7 @@ def load_composites(directory='era5_reanal/anomalies/'):
     comp_pres, comp_sing, comp_rad = {}, {}, {}
     
     composite_dict = {'pres': comp_pres, 'sing': comp_sing, 'rad': comp_rad}
-    phases = ['el_nino', 'la_nina', 'neutral']
+    phases = ['el_nino', 'la_nina', 'neutral', 'clim']
     
     for comp_type, comp_dict in composite_dict.items():
         for phase in phases:
@@ -190,7 +197,7 @@ def load_composites(directory='era5_reanal/anomalies/'):
     return comp_pres, comp_sing, comp_rad
 
 
-def crop_era5(xr_array):
+def crop_era5(xr_array, rename=True):
     """
     Crops to CZ modeldimentions
     """
@@ -200,31 +207,35 @@ def crop_era5(xr_array):
                            longitude=slice(east_lon, 180))
     ds_west = xr_array.sel(latitude=slice(max_lat, min_lat),
                            longitude=slice(-180, west_lon))
-    
-    return xr.concat([ds_east, ds_west], dim="longitude")
+    df = xr.concat([ds_east, ds_west], dim="longitude")
+    if rename:
+        df = df.rename({'latitude': 'lat', 'longitude': 'lon'})
+    return df
 
 
-def plot_scalar(era5, var, title='', lims=cz_domain, cbar='HCC (Frac)'):
+def plot_scalar(comp_dict, var, month=12, phase='la_nina', title='',
+                lims=cz_domain, cbar='HCC (Frac)'):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     """
+    era5 = comp_dict[phase].sel(month=month)
     # Define central longitude to correctly handle global data
     proj = ccrs.PlateCarree(central_longitude=180)
     
     # Ensure longitude wraps correctly if in 0-360 range
-    if era5.longitude.max() > 180:
-        era5 = era5.assign_coords(longitude=(((era5.longitude + 180) % 360) - 180))
-        era5 = era5.sortby('longitude')
+    if era5.lon.max() > 180:
+        era5 = era5.assign_coords(lon=(((era5.lon + 180) % 360) - 180))
+        era5 = era5.sortby('lon')
     
     # Extract data for plotting
     data = era5[var]
-    lon = era5.longitude.values
-    lat = era5.latitude.values
+    lon = era5.lon.values
+    lat = era5.lat.values
     
     # Print diagnostics to confirm data ranges
-    print(f"Data variable '{var}' - min: {data.min().item()}, max: {data.max().item()}")
-    print(f"Longitude range: {lon.min()} to {lon.max()}")
-    print(f"Latitude range: {lat.min()} to {lat.max()}")
+    print(f"Data variable '{var}' - min: {data.min().item():.3f}, max: {data.max().item():.3f}")
+    # print(f"Longitude range: {lon.min()} to {lon.max()}")
+    # print(f"Latitude range: {lat.min()} to {lat.max()}")
 
     # Create meshgrid if needed
     lon2d, lat2d = np.meshgrid(lon, lat)
@@ -251,8 +262,150 @@ def plot_scalar(era5, var, title='', lims=cz_domain, cbar='HCC (Frac)'):
     plt.show()
 
 
+def single_level_div(comp_sing, comp_pres):
+    """
+    Calculates divergence (mean and 950 hpa) from comp_pres and assigns
+    it as a level to comp_sing
+    """
+    for phase, df in comp_pres.items():
+        mean_d = comp_pres[phase]['d'].sel(pressure_level=slice(1000, 850))
+        mean_d = mean_d.mean(dim='pressure_level')
+        comp_sing[phase]['d_mean'] = mean_d
+        comp_sing[phase]['d_950'] = comp_pres[phase]['d'].sel(pressure_level=950)
+        
+    return comp_sing        
+
+
+def coarsen_era5(comp_sing, comp_pres, comp_rad):
+    """
+    Coarsens the ERA5 grids to match CERES grid dimentions
+    """
+    lat_factor = comp_sing['el_nino'].dims['lat'] //\
+        comp_rad['el_nino'].dims['lat']
+    lon_factor = comp_sing['el_nino'].dims['lon'] //\
+        comp_rad['el_nino'].dims['lon']
+    
+    for phase, df in comp_pres.items():
+        comp_pres[phase] = df.coarsen(lat=lat_factor, lon=lon_factor,
+                               boundary="trim").mean()
+    for phase, df in comp_sing.items():
+        comp_sing[phase] = df.coarsen(lat=lat_factor, lon=lon_factor,
+                               boundary="trim").mean()
+    return comp_sing, comp_pres
+
+
+def regrid_era5(comp_sing, comp_pres, comp_rad):
+    """
+    Regrids ERA5 data in comp_sing and comp_pres dictionaries to CERES grid dimensions.
+    Uses the latitude and longitude from comp_rad['el_nino'] as the target CERES grid.
+    """
+    # Define CERES grid based on comp_rad
+    ds_ceres_grid = xr.Dataset({
+        "lat": (["lat"], comp_rad['el_nino'].lat),  # CERES latitudes
+        "lon": (["lon"], comp_rad['el_nino'].lon),  # CERES longitudes
+    })
+    
+    # Create the regridder once for efficiency
+    regridder = xe.Regridder(list(comp_sing.values())[0], ds_ceres_grid,
+                             method="bilinear")
+    
+    # Regrid each dataset in comp_sing
+    for key, ds_era5 in comp_sing.items():
+        comp_sing[key] = regridder(ds_era5)
+    
+    # Regrid each dataset in comp_pres
+    for key, ds_era5 in comp_pres.items():
+        comp_pres[key] = regridder(ds_era5)
+        
+    return comp_sing, comp_pres
+
+
+def create_anomaly(comp_dict):
+    """
+    Creates the anomaly fields for el nino/la nina/neutral by
+    subtracting the climatology field from the same dict
+    """
+    comp_anom = dict()
+    
+    for key, value in comp_dict.items():
+        if key == 'clim':
+            continue
+        comp_anom[key] = comp_dict[key] - comp_dict['clim']
+    
+    return comp_anom
+
+
+def plot_enso_comparison(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims=None,
+                         title=''):
+    """
+    Plot a 2x3 grid of scalar fields for El Niño and La Niña conditions across specified variables.
+    
+    Parameters:
+    - comp_sing: Dictionary containing data arrays for different ENSO conditions (El Niño and La Niña).
+    - month: Integer representing the month index to be plotted.
+    - variables: List of variable names to plot (default ['hcc', 'mcc', 'lcc']).
+    """
+    width = len(comp_sing.keys())
+    fig, axs = plt.subplots(width, 3, subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)}, 
+                            figsize=(24, 11))
+    # Position title
+    height = 0.92 if width==3 else 0.95
+    shrink = 0.6 if width==3 else 0.7
+    fig.suptitle(title + f' for {calendar.month_name[month]}', fontsize=20,
+                 y=height)
+    
+    # Conditions and row labels
+    conditions = list(comp_sing.keys())
+    row_labels = ['El Niño', 'La Niña', 'Neutral', 'Climatology']
+    plt.tight_layout()
+    
+    # Iterate over rows and columns for the ENSO conditions and variables
+    for row, condition in enumerate(conditions):
+        for col, var in enumerate(variables):
+            ax = axs[row, col]
+            ax.set_global()
+            ax.set_title(f'{row_labels[row]} - {var.upper()}')
+            
+            # Extract data for the specific condition, month, and variable
+            data = comp_sing[condition].sel(month=month)[var]
+            lon = comp_sing[condition].lon.values
+            lat = comp_sing[condition].lat.values
+            
+            # Color bar that is white at zero
+            # norm = TwoSlopeNorm(vmin=data.min(), vcenter=0, vmax=data.max())
+            
+            # Adjust longitude range if needed
+            if lon.max() > 180:
+                lon = (((lon + 180) % 360) - 180)
+                lon, data = np.sort(lon), data.sel(longitude=lon)
+            
+            # Create meshgrid for plotting
+            lon2d, lat2d = np.meshgrid(lon, lat)
+            
+            # Plot with pcolormesh
+            pcm = ax.pcolormesh(lon2d, lat2d, 100 * data, transform=ccrs.PlateCarree(), 
+                                shading='auto', cmap='RdBu_r')
+            
+            # Add coastlines and gridlines
+            ax.coastlines()
+            ax.gridlines(dms=True, 
+                         x_inline=False, y_inline=False)
+            
+            # Add color bar to each plot
+            cbar = fig.colorbar(pcm, ax=ax, orientation='vertical', 
+                                pad=0.05, shrink=shrink, aspect=20)
+            cbar.set_label(f'{var.upper()} %')
+            
+            # Set limits if needed (optional customization)
+            ax.set_ylim(lims[0], lims[1])
+            ax.set_xlim(lims[3] + 20, lims[2] - 20)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to fit title
+    plt.show()
+
+
 def main():
-    global comp_pres, comp_sing, comp_rad
+    global comp_pres, comp_sing, comp_rad, anom_pres, anom_sing, anom_rad
     directory = 'era5_reanal/anomalies/'    
     # Check if files exist
     files_exist = all(os.path.exists(os.path.join(directory, f'{comp}_{phase}.nc'))
@@ -268,9 +421,10 @@ def main():
         print("Files not found. Generating composites and saving to NetCDF files.")
         era5_sing = xr.open_dataset('era5_reanal/era5_reanal_modern.nc').drop_vars('expver')
         era5_pres = xr.open_dataset('era5_reanal/era5_reanal_pres.nc').drop_vars('expver')
-        # Crop to region
-        era5_sing = crop_era5(era5_sing)
-        era5_pres = crop_era5(era5_pres)
+        # Crop to region (also renames to lat/lon for conveinence)
+        era5_sing = crop_era5(era5_sing, rename=True)
+        era5_pres = crop_era5(era5_pres, rename=True)
+        
         ceres = xr.load_dataset('misc_data/CERES_radiation.nc')
         
         # Create column data for CERES
@@ -300,6 +454,20 @@ def main():
         
         # Save the generated composites
         save_composites(comp_pres, comp_sing, comp_rad, directory)
+    
+    # Create anomaly fields
+    anom_sing = create_anomaly(comp_sing)
+    anom_pres = create_anomaly(comp_pres)
+    anom_rad = create_anomaly(comp_rad)
+    # Actual data analysis time!
+    # Add divergence
+    anom_sing = single_level_div(anom_sing, anom_pres)
+    anom_sing, anom_pres = coarsen_era5(anom_sing, anom_pres, anom_rad)
+    
+    # Plot cloud cover
+    plot_enso_comparison(comp_sing, month=12, lims=cz_domain, title='Composite')
+
+    plot_enso_comparison(anom_sing, month=12, lims=cz_domain, title='Anomaly')
 
     
 if __name__ == '__main__':
