@@ -31,6 +31,7 @@ from CZ_model.standard_funcs import interp_grid
 
 
 cz_domain = [-30, 30, 120, -80]
+ep_domain = [-30, 10, -10, -80]
 
 
 def mean_year(xr_array):
@@ -80,18 +81,14 @@ def reorder_year_dim(ds, mode="May"):
     return ds
 
 
-def enso_composite(xr_array, nino_idx, print_num=False, small=False):
+def enso_composite(xr_array, nino_idx, print_num=False):
     """
     Creates three composites- one for Neutral conditions, one for El Nino,
     and one for La Nina. Returns each of these composites along with 
     the climatological year
     """
     # Faster and simpler calculation if ceres as it works
-    if small:
-        climatology = xr_array.groupby('time.month').mean(dim='time')
-    else:
-        climatology = mean_year(xr_array.copy(deep=True))
-        climatology = reorder_year_dim(climatology, mode="Jan") # Align Jan-Dec
+    climatology = xr_array.groupby('time.month').mean(dim='time')
     years = np.unique(xr_array.time.dt.year.values)
     tot = len(years)
     
@@ -335,8 +332,9 @@ def create_anomaly(comp_dict):
     return comp_anom
 
 
-def plot_enso_comparison(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims=None,
-                         title=''):
+def plot_enso_comp_multi(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims=cz_domain,
+                         title='', names=['High CC', 'Mid CC', 'Low CC'],
+                         scale=100, unit='%'):
     """
     Plot a 2x3 grid of scalar fields for El Niño and La Niña conditions across specified variables.
     
@@ -344,13 +342,21 @@ def plot_enso_comparison(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims
     - comp_sing: Dictionary containing data arrays for different ENSO conditions (El Niño and La Niña).
     - month: Integer representing the month index to be plotted.
     - variables: List of variable names to plot (default ['hcc', 'mcc', 'lcc']).
+    - lims: domain limit (just the cz domain)
+    - title: title to preceed calendar month name
+    - names: labels for variables
+    - scale: scale multiplier for percentage
+    - unit: unit of label
     """
     width = len(comp_sing.keys())
+    figsize = (24, 10) if width==3 else (20, 11)
+    
     fig, axs = plt.subplots(width, 3, subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)}, 
-                            figsize=(24, 11))
+                            figsize=figsize)
     # Position title
-    height = 0.92 if width==3 else 0.95
-    shrink = 0.6 if width==3 else 0.7
+    height = 0.95 if width==3 else 0.95
+    shrink = 0.69 if width==3 else 0.9
+    sep = 0.03 if width==3 else 0.03
     fig.suptitle(title + f' for {calendar.month_name[month]}', fontsize=20,
                  y=height)
     
@@ -364,7 +370,7 @@ def plot_enso_comparison(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims
         for col, var in enumerate(variables):
             ax = axs[row, col]
             ax.set_global()
-            ax.set_title(f'{row_labels[row]} - {var.upper()}')
+            ax.set_title(f'{row_labels[row]} - {names[col]}')
             
             # Extract data for the specific condition, month, and variable
             data = comp_sing[condition].sel(month=month)[var]
@@ -375,32 +381,101 @@ def plot_enso_comparison(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims
             # norm = TwoSlopeNorm(vmin=data.min(), vcenter=0, vmax=data.max())
             
             # Adjust longitude range if needed
-            if lon.max() > 180:
-                lon = (((lon + 180) % 360) - 180)
-                lon, data = np.sort(lon), data.sel(longitude=lon)
+            #if lon.max() > 180:
+             #   lon = (((lon + 180) % 360) - 180)
+            #    lon, data = np.sort(lon), data.sel(lon=lon)
             
             # Create meshgrid for plotting
             lon2d, lat2d = np.meshgrid(lon, lat)
             
             # Plot with pcolormesh
-            pcm = ax.pcolormesh(lon2d, lat2d, 100 * data, transform=ccrs.PlateCarree(), 
+            pcm = ax.pcolormesh(lon2d, lat2d, scale * data, transform=ccrs.PlateCarree(), 
                                 shading='auto', cmap='RdBu_r')
             
             # Add coastlines and gridlines
             ax.coastlines()
-            ax.gridlines(dms=True, 
+            ax.gridlines(dms=True, draw_labels=True,
                          x_inline=False, y_inline=False)
-            
             # Add color bar to each plot
             cbar = fig.colorbar(pcm, ax=ax, orientation='vertical', 
                                 pad=0.05, shrink=shrink, aspect=20)
-            cbar.set_label(f'{var.upper()} %')
+            cbar.set_label(unit)
             
             # Set limits if needed (optional customization)
             ax.set_ylim(lims[0], lims[1])
             ax.set_xlim(lims[3] + 20, lims[2] - 20)
+            # ax.gridlines(draw_labels=True)
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to fit title
+    plt.subplots_adjust(wspace=sep)
+    plt.show()
+
+
+def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
+                   name='SST'):
+    """
+    Plot a 2x3 grid of scalar fields for El Niño and La Niña conditions across specified variables.
+    
+    Parameters:
+    - comp_sing: Dictionary containing data arrays for different ENSO conditions (El Niño and La Niña).
+    - month: Integer representing the month index to be plotted.
+    - variables: List of variable names to plot (default ['hcc', 'mcc', 'lcc']).
+    """
+    width = len(comp_sing.keys())
+    height = 0.45 if width==3 else 0.4
+    fig, axs = plt.subplots(1, width, subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)}, 
+                            figsize=(24, 11), layout='constrained')
+    fig.suptitle(title + f' for {calendar.month_name[month]}', fontsize=20,
+                 y=height)
+    
+    # Conditions and row labels
+    conditions = list(comp_sing.keys())
+    row_labels = ['El Niño', 'La Niña', 'Neutral', 'Climatology']
+    
+    # Iterate over rows and columns for the ENSO conditions and variables
+    for col, condition in enumerate(conditions):
+        ax = axs[col]
+        ax.set_global()
+        ax.set_title(f'{row_labels[col]} - {var.upper()}')
+        
+        # Extract data for the specific condition, month, and variable
+        data = comp_sing[condition].sel(month=month)[var]
+        lon = comp_sing[condition].lon.values
+        lat = comp_sing[condition].lat.values
+        
+        # Color bar that is white at zero
+        # norm = TwoSlopeNorm(vmin=data.min(), vcenter=0, vmax=data.max())
+        
+        # Adjust longitude range if needed
+        if lon.max() > 180:
+            lon = (((lon + 180) % 360) - 180)
+            lon, data = np.sort(lon), data.sel(longitude=lon)
+        
+        # Create meshgrid for plotting
+        lon2d, lat2d = np.meshgrid(lon, lat)
+        
+        # Plot with pcolormesh
+        pcm = ax.pcolormesh(lon2d, lat2d, data, transform=ccrs.PlateCarree(), 
+                            shading='auto', cmap='RdBu_r')
+        
+        # Add coastlines and gridlines
+        ax.coastlines()
+        ax.gridlines(dms=True, 
+                     x_inline=False, y_inline=False)
+        
+        # Add color bar to each plot
+        # cbar = fig.colorbar(pcm, ax=ax, orientation='vertical', 
+        #                    pad=0.05, shrink=shrink, aspect=20)
+        # cbar.set_label(name + unit)
+        
+        # Set limits if needed (optional customization)
+        ax.set_ylim(lims[0], lims[1])
+        ax.set_xlim(lims[3] + 20, lims[2] - 20)
+        
+    # plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to fit title
+    cbar = fig.colorbar(pcm, ax=axs.ravel().tolist(), orientation='horizontal',
+                        aspect=50)
+    cbar.set_label(name + ' (' + unit + ')')
     plt.show()
 
 
@@ -425,7 +500,7 @@ def main():
         era5_sing = crop_era5(era5_sing, rename=True)
         era5_pres = crop_era5(era5_pres, rename=True)
         
-        ceres = xr.load_dataset('misc_data/CERES_radiation.nc')
+        ceres = xr.load_dataset('ceres_data/ceres_ebaf_all.nc')
         
         # Create column data for CERES
         ceres['atms_net_all'] = ceres['toa_net_all_mon'] - ceres['sfc_net_tot_all_mon']
@@ -450,7 +525,7 @@ def main():
         print('Calculating ERA5 Single Levels data')
         comp_sing = enso_composite(era5_sing, oni_idx, print_num=False)
         print('\nCalculating CERES data')
-        comp_rad = enso_composite(ceres, oni_idx, print_num=True, small=True)
+        comp_rad = enso_composite(ceres, oni_idx, print_num=True)
         
         # Save the generated composites
         save_composites(comp_pres, comp_sing, comp_rad, directory)
@@ -464,11 +539,32 @@ def main():
     anom_sing = single_level_div(anom_sing, anom_pres)
     anom_sing, anom_pres = coarsen_era5(anom_sing, anom_pres, anom_rad)
     
+    
+    # Plotting
+    month = 12
+    
     # Plot cloud cover
-    plot_enso_comparison(comp_sing, month=12, lims=cz_domain, title='Composite')
+    plot_enso_comp_multi(comp_sing, month=month, lims=cz_domain, title='Composite')
 
-    plot_enso_comparison(anom_sing, month=12, lims=cz_domain, title='Anomaly')
-
+    plot_enso_comp_multi(anom_sing, month=month, lims=cz_domain, title='Anomaly')
+    
+    # Plot Radiation
+    variables = ['toa_net_all_mon', 'sfc_net_sw_all_mon', 'atms_net_all']
+    labels = ['TOA Net', 'SFC Net', 'ATM Net']
+    plot_enso_comp_multi(comp_rad, month=month, variables=variables, lims=cz_domain, 
+                         title='Radiation Composites', names=labels, 
+                         scale=1, unit='W/m2')
+    plot_enso_comp_multi(anom_rad, month=month, variables=variables,
+                         lims=cz_domain, title='Radiation Anomalies', 
+                         names=labels, scale=1, unit='W/m2')
+    
+    # SST Anomalies
+    plot_enso_comp(comp_sing, month=month, var='sst', lims=cz_domain, 
+                   title='Sea Surface Temperature', unit='K',
+                       name='SST')
+    plot_enso_comp(anom_sing, month=month, var='sst', lims=cz_domain,
+                   title='SST Anomalies', unit='K',
+                       name='SST')
     
 if __name__ == '__main__':
     main()
