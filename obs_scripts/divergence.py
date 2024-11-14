@@ -65,6 +65,25 @@ def iterated_sum(agg_array, element):
     return agg_array
 
 
+def calc_eis(era5_eis):
+    """
+    Calculates estimated inversion strength of dataarray and returns the same
+    
+    also returns theta_700
+    
+    copied from cloud_corr. I should create a shared function file
+    """
+    # Remove last month since our single levels data doesn't have that
+    era5_eis = era5_eis[{'time':slice(0, len(era5_eis.time) - 1)}]
+    t_700 = era5_eis.sel(pressure_level=700)['t']
+    t_1000 = era5_eis.sel(pressure_level=1000)['t']
+    
+    # R/cp from wikipedia
+    theta_700 = t_700 * (1000 / 700)**(0.286)
+    # Since theta = T at surface reference pressure
+    return (theta_700 - t_1000), theta_700
+
+
 def reorder_year_dim(ds, mode="May"):
     """
     Assigns coordinate to xarray year starting in May and ending in April
@@ -480,7 +499,7 @@ def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
 
 
 def main():
-    global comp_pres, comp_sing, comp_rad, anom_pres, anom_sing, anom_rad
+    global comp_sing
     directory = 'era5_reanal/anomalies/'    
     # Check if files exist
     files_exist = all(os.path.exists(os.path.join(directory, f'{comp}_{phase}.nc'))
@@ -496,10 +515,13 @@ def main():
         print("Files not found. Generating composites and saving to NetCDF files.")
         era5_sing = xr.open_dataset('era5_reanal/era5_reanal_modern.nc').drop_vars('expver')
         era5_pres = xr.open_dataset('era5_reanal/era5_reanal_pres.nc').drop_vars('expver')
+        # Load in the EIS variable too
+        era5_eis = xr.open_dataset('era5_reanal/era5_lts.nc').drop_vars('expver')
         # Crop to region (also renames to lat/lon for conveinence)
         era5_sing = crop_era5(era5_sing, rename=True)
         era5_pres = crop_era5(era5_pres, rename=True)
-        
+        era5_eis = crop_era5(era5_eis, rename=True)
+                
         ceres = xr.load_dataset('ceres_data/ceres_ebaf_all.nc')
         
         # Create column data for CERES
@@ -512,12 +534,18 @@ def main():
         # Create time axis
         era5_pres['time'] = pd.to_datetime(era5_pres.date, format='%Y%m%d')
         era5_sing['time'] = pd.to_datetime(era5_sing.date, format='%Y%m%d')
+        era5_eis['time'] = pd.to_datetime(era5_eis.date, format='%Y%m%d')
         # Assign coordinate
         era5_pres = era5_pres.assign_coords(time=("date", era5_pres.time.data))
         era5_sing = era5_sing.assign_coords(time=("date", era5_sing.time.data))
+        era5_eis = era5_eis.assign_coords(time=("date", era5_eis.time.data))
         # Swap coordinate and drop old one
         era5_pres = era5_pres.swap_dims({"date": "time"}).drop_vars('date')
         era5_sing = era5_sing.swap_dims({"date": "time"}).drop_vars('date')
+        era5_eis = era5_eis.swap_dims({"date": "time"}).drop_vars('date')
+        
+        # Pass theta 700 information to the single level data
+        era5_sing['eis'], era5_sing['theta_700'] = calc_eis(era5_eis)
         
         # Generate anomaly fields
         print('Calculating ERA5 Pressure Levels data')
@@ -538,7 +566,6 @@ def main():
     # Add divergence
     anom_sing = single_level_div(anom_sing, anom_pres)
     anom_sing, anom_pres = coarsen_era5(anom_sing, anom_pres, anom_rad)
-    
     
     # Plotting
     month = 12
@@ -565,6 +592,13 @@ def main():
     plot_enso_comp(anom_sing, month=month, var='sst', lims=cz_domain,
                    title='SST Anomalies', unit='K',
                        name='SST')
+    plot_enso_comp(anom_sing, month=month, var='eis', lims=cz_domain,
+                   title='EIS Anomalies', unit='K',
+                       name='EIS')
+    plot_enso_comp(anom_sing, month=month, var='theta_700', lims=cz_domain,
+                   title='700 HPa Pot. Temp. Anomalies', unit='K',
+                       name='Theta 700')
+    
     
 if __name__ == '__main__':
     main()
