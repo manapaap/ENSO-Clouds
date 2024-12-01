@@ -264,7 +264,7 @@ def plot_map(cloud_type, var='cldamt', central_longitude=180, title='deep',
     plt.show()
 
 
-def plot_enso(nino, var='3.4_anom', cutoff=0.4):
+def plot_enso(nino, var='3.4_anom', cutoff=0.4, idx='Nino 3.4'):
     """
     Creates a plot of the nino 3.4 index and cutoffs
     """
@@ -275,8 +275,8 @@ def plot_enso(nino, var='3.4_anom', cutoff=0.4):
     plt.hlines(-cutoff, xmin=nino['time'].iloc[0], xmax=nino['time'].iloc[-1],
                linestyle='dashed', alpha=0.8, color='grey')
     plt.xlabel('Years')
-    plt.ylabel('Nino 3.4 anomaly')
-    plt.title('Nino 3.4 Index')
+    plt.ylabel(idx + 'anomaly')
+    plt.title(idx + 'Index')
     plt.grid()    
     ax = plt.gca()
     ax.fill_between(nino['time'], cutoff, nino[var], 
@@ -388,11 +388,14 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
     num_la_nina = 0
     neutral = None
     num_neutral = 0
+    clim = None
     
     for n, fname in enumerate(to_load):
         progress_bar(n, total)
-        enso_state = is_enso(nino_idx, fname[:7])
+        enso_state = is_enso_oni(nino_idx, fname[:7])
         # Create composite by ENSO state
+        if clim is None:
+            clim = load_cloud_file(dirpath + fname, domain=domain)
         if enso_state == 'El Nino':
             if el_nino is None:
                 el_nino = load_cloud_file(dirpath + fname, domain=domain)
@@ -400,6 +403,7 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
             else:
                 file = load_cloud_file(dirpath + fname, domain=domain)
                 el_nino[var] += file[var]
+                clim[var] += file[var]
                 num_el_nino += 1
         elif enso_state == 'La Nina':
             if la_nina is None:
@@ -408,6 +412,7 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
             else:
                 file = load_cloud_file(dirpath + fname, domain=domain)
                 la_nina[var] += file[var]
+                clim[var] += file[var]
                 num_la_nina += 1 
         elif enso_state == 'Neutral':
             if neutral is None:
@@ -416,6 +421,7 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
             else:
                 file = load_cloud_file(dirpath + fname, domain=domain)
                 neutral[var] += file[var]
+                clim[var] += file[var]
                 num_neutral += 1
     # Safeguard in case a selection of time is chosen without an event
     if el_nino != None:
@@ -424,15 +430,17 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
         la_nina[var] /= num_la_nina
     if neutral != None:
         neutral[var] /= num_neutral
+    if clim != None:
+        clim[var] /= (num_el_nino + num_la_nina + num_neutral)
     
-    return el_nino, la_nina, neutral
+    return el_nino, la_nina, neutral, clim
             
 
 def main():
     nino_idx = load_nino_idx('misc_data/nino_all.csv')
-    plot_enso(nino_idx)
+    plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4 ')
     oni_idx = load_oni_idx('misc_data/oni_index.txt')
-    plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5)
+    plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5, idx='ONI ')
     
     # cloud_ex = load_cloud_file('ISCCP_clouds/2015.12.nc')   
     _, cloud_dict = isccp_cloud_dict()
@@ -440,12 +448,14 @@ def main():
     domain = cz_domain
     central_longitude = 180
     
-    el_nino, la_nina, neutral = enso_composite('ISCCP_clouds/', nino_idx, 
+    el_nino, la_nina, neutral, clim = enso_composite('ISCCP_clouds/', oni_idx, 
                                                'winter', domain=domain)
     
     # Variable of intrest
     var = 'cldamt' # 'cldamt'
     
+    plot_map(clim, title='Climatology', var=var, plot='reg',
+             central_longitude=central_longitude, domain=domain)
     plot_map(el_nino, title='Composite El Nino', var=var, plot='reg',
              central_longitude=central_longitude, domain=domain)
     plot_map(la_nina, title='Composite La Nina', var=var, plot='reg',
@@ -459,20 +469,20 @@ def main():
     
     
     nino_nina_diff = el_nino.copy(deep=True)
-    nino_nina_diff[var] -= la_nina[var]
-    plot_map(nino_nina_diff, title='El Nino - La Nina Difference',
+    nino_nina_diff[var] -= clim[var]
+    plot_map(nino_nina_diff, title='El Nino Winter',
              var=var, domain=domain, plot='diff',
                       central_longitude=central_longitude)
     
-    nino_neu_diff = el_nino.copy(deep=True)
-    nino_neu_diff[var] -= neutral[var]
-    plot_map(nino_neu_diff, title='El Nino - Neutral Difference',
+    nino_neu_diff = la_nina.copy(deep=True)
+    nino_neu_diff[var] -= clim[var]
+    plot_map(nino_neu_diff, title='La Nina Winter',
              var=var, domain=domain, plot='diff',
                       central_longitude=central_longitude)
     
     nina_neu_diff = la_nina.copy(deep=True)
-    nina_neu_diff[var] -= neutral[var]
-    plot_map(nina_neu_diff, title='La Nina - Neutral Difference',
+    nina_neu_diff[var] -= clim[var]
+    plot_map(nina_neu_diff, title='Neutral Winter',
              var=var, domain=domain, plot='diff',
                       central_longitude=central_longitude)
     

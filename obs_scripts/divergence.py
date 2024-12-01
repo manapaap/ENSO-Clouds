@@ -31,7 +31,7 @@ from CZ_model.standard_funcs import interp_grid
 
 
 cz_domain = [-30, 30, 120, -80]
-ep_domain = [-30, 10, -10, -80]
+ep_domain = [-30, 10, -120, -80]
 
 
 def mean_year(xr_array):
@@ -100,13 +100,22 @@ def reorder_year_dim(ds, mode="May"):
     return ds
 
 
-def enso_composite(xr_array, nino_idx, print_num=False):
+def polyfit_detrend(dataarray, dim='time'):
+    # Fit a polynomial and subtract the trend
+    trend = dataarray.polyfit(dim=dim, deg=1)
+    fit = xr.polyval(dataarray[dim], trend.polyfit_coefficients)
+    return dataarray - fit
+
+
+def enso_composite(xr_array, nino_idx, print_num=False, deas=True):
     """
     Creates three composites- one for Neutral conditions, one for El Nino,
     and one for La Nina. Returns each of these composites along with 
     the climatological year
     """
-    # Faster and simpler calculation if ceres as it works
+    # DETREND LINEAR
+    # xr_array = xr_array.map(lambda da: polyfit_detrend(da, 'time'))
+    # Faster and simpler calculation working?
     climatology = xr_array.groupby('time.month').mean(dim='time')
     years = np.unique(xr_array.time.dt.year.values)
     tot = len(years)
@@ -114,7 +123,7 @@ def enso_composite(xr_array, nino_idx, print_num=False):
     # Initialize composites
     el_nino, la_nina, neutral = None, None, None
     num_el_nino, num_la_nina, num_neutral = 0, 0, 0
-
+    
     # Loop over years, but align composites from May to April
     for n, yr in enumerate(range(years[0], years[-1])):
         progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
@@ -172,6 +181,102 @@ def enso_composite(xr_array, nino_idx, print_num=False):
     return comps
 
 
+def enso_composite_deas(xr_array, nino_idx, print_num=False, weird=False):
+    """
+    Creates three composites- one for Neutral conditions, one for El Nino,
+    and one for La Nina. Returns each of these composites along with 
+    the climatological year
+    
+    Deaseasonalized FIRST
+    """
+    if weird:
+        xr_array = xr_array.drop_vars('number')
+    # Faster and simpler calculation if ceres as it works
+    climatology = xr_array.groupby('time.month').mean(dim='time')
+    climatology = climatology
+    years = np.unique(xr_array.time.dt.year.values)
+    tot = len(years)
+    
+    # Initialize composites
+    el_nino, la_nina, neutral = None, None, None
+    num_el_nino, num_la_nina, num_neutral = 0, 0, 0
+    
+    xr_array_ds = xr_array.copy(deep=True).sel(time=slice("2000-01", "2023-12"))
+    years = np.unique(xr_array_ds.time.dt.year)
+    for n, year in enumerate(years):
+        # no idea what "number" is
+        year_data = xr_array_ds.sel(time=slice(f'{year}-01', f'{year}-12'))
+        time_axis = year_data.time
+        # Reassign time axis so it is consistent with the selected slice
+        climatology['time'] = time_axis.data
+        if len(time_axis) < 12 and n > 0:
+            climatology = climatology[{'time':slice(0, len(time_axis))}]
+        climatology = climatology.assign_coords(time=("month",
+                                                     climatology.time.data))
+        climatology = climatology.swap_dims({"month": "time"})
+        # Subtract climatology year by year       
+        # index climatology to not lose extra year
+        xr_array_ds[{"time":slice(12 * n, 12 * (n + 1))}] -= climatology
+    
+    xr_array_ds = xr_array_ds.map(lambda da: polyfit_detrend(da, 'time'))
+    xr_array = xr_array_ds
+
+    # Loop over years, but align composites from May to April
+    for n, yr in enumerate(range(years[0], years[-1])):
+        progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
+        # Check the ENSO phase in December (yr)
+        enso_state = is_enso_oni(nino_idx, f'{yr}.12')
+
+        # Select data from May (yr) to April (yr+1)
+        may_to_april = xr_array.sel(time=slice(f'{yr}-04-01', f'{yr+1}-03-30')).copy(deep=True)
+        # Overwrite time information that of climatology
+        may_to_april = reorder_year_dim(may_to_april, mode='May') # Align May-April
+        # Update composites based on ENSO state in December
+        if enso_state == 'El Nino':
+            if el_nino is None:
+                el_nino = may_to_april
+            else:
+                el_nino = el_nino + may_to_april
+            num_el_nino += 1
+        elif enso_state == 'La Nina':
+            if la_nina is None:
+                la_nina = may_to_april
+            else:
+                la_nina = la_nina + may_to_april
+            num_la_nina += 1            
+        else:  # Neutral
+            if neutral is None:
+                neutral = may_to_april
+            else:
+                neutral = neutral + may_to_april
+            num_neutral += 1
+            
+    # Safeguard against zero divisions
+    if el_nino is not None:
+        el_nino /= num_el_nino
+        # el_nino = el_nino.sortby("month") - climatology
+        # el_nino.groupby('time.month').mean(dim='time')
+    if la_nina is not None:
+        la_nina /= num_la_nina
+        # la_nina = la_nina.sortby("month") - climatology
+        # la_nina.groupby('time.month').mean(dim='time')
+    if neutral is not None:
+        neutral /= num_neutral
+        # neutral = neutral.sortby("month") - climatology
+        # neutral.groupby('time.month').mean(dim='time')
+    
+    if print_num:
+        print(f'\n{num_el_nino} El Nino years, {num_la_nina} La Nina years,' +\
+              f' {num_neutral} Neutral years')
+    
+    # Store this as a dict so it is managable
+    comps = {'el_nino': el_nino.sortby("month"),
+             'la_nina': la_nina.sortby("month"), 
+             'neutral': neutral.sortby("month")}
+    
+    return comps
+
+
 def save_composites(comp_pres, comp_sing, comp_rad, directory='era5_reanal/anomalies/'):
     """
     Saves the composite dictionaries (comp_pres, comp_sing, comp_rad) to NetCDF files.
@@ -190,7 +295,7 @@ def save_composites(comp_pres, comp_sing, comp_rad, directory='era5_reanal/anoma
             print(f'Saved {phase} composite for {comp_type} to {filename}')
 
 
-def load_composites(directory='era5_reanal/anomalies/'):
+def load_composites(directory='era5_reanal/anomalies/', clim=True):
     """
     Loads the composite dictionaries (comp_pres, comp_sing, comp_rad) from NetCDF files.
     Returns the dictionaries with the same structure as in the script.
@@ -198,7 +303,9 @@ def load_composites(directory='era5_reanal/anomalies/'):
     comp_pres, comp_sing, comp_rad = {}, {}, {}
     
     composite_dict = {'pres': comp_pres, 'sing': comp_sing, 'rad': comp_rad}
-    phases = ['el_nino', 'la_nina', 'neutral', 'clim']
+    phases = ['el_nino', 'la_nina', 'neutral']
+    if clim:
+        phases.append('clim')
     
     for comp_type, comp_dict in composite_dict.items():
         for phase in phases:
@@ -213,19 +320,49 @@ def load_composites(directory='era5_reanal/anomalies/'):
     return comp_pres, comp_sing, comp_rad
 
 
-def crop_era5(xr_array, rename=True):
+def crop_era5(xr_array, rename=True, coord='180', domain=cz_domain,
+              mode='inside'):
     """
     Crops to CZ modeldimentions
+    
+    Returns the region OUTSIDE our box if mode=='outside'
     """
     min_lat, max_lat, east_lon, west_lon = cz_domain
     
-    ds_east = xr_array.sel(latitude=slice(max_lat, min_lat), 
-                           longitude=slice(east_lon, 180))
-    ds_west = xr_array.sel(latitude=slice(max_lat, min_lat),
-                           longitude=slice(-180, west_lon))
-    df = xr.concat([ds_east, ds_west], dim="longitude")
     if rename:
-        df = df.rename({'latitude': 'lat', 'longitude': 'lon'})
+        xr_array = xr_array.rename({'latitude': 'lat', 'longitude': 'lon'})
+    
+    if mode=='inside':
+        if coord=='180':
+            ds_east = xr_array.sel(lat=slice(max_lat, min_lat), 
+                                   lon=slice(east_lon, 180))
+            ds_west = xr_array.sel(lat=slice(max_lat, min_lat),
+                                   lon=slice(-180, west_lon))
+            df = xr.concat([ds_east, ds_west], dim="lon")
+            
+        elif coord=='360':
+            df = xr_array.sel(lat=slice(min_lat, max_lat), 
+                              lon=slice(east_lon, 360 + west_lon))
+        else:
+            print('How do you bork your own code this bad...')
+    else:
+        if coord == '180':
+            # Latitude mask (everything outside min_lat to max_lat)
+            lat_mask = ((xr_array['lat'] > max_lat) | (xr_array['lat'] < min_lat))
+        
+            # Longitude mask (everything outside east_lon to west_lon)
+            lon_mask_east = (xr_array['lon'] > east_lon) & (xr_array['lon'] <= 180)
+            lon_mask_west = (xr_array['lon'] < west_lon) & (xr_array['lon'] >= -180)
+            lon_mask = ~(lon_mask_east | lon_mask_west)  # Invert tropical Pacific region
+        
+            # Combine the masks
+            mask = lat_mask | lon_mask
+        
+            # Apply the mask
+            df = xr_array.where(mask, drop=True)
+        else:
+            print('Need to implement for 360...')
+
     return df
 
 
@@ -431,17 +568,21 @@ def plot_enso_comp_multi(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims
 
 
 def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
-                   name='SST'):
+                   name='SST', neutral=False):
     """
-    Plot a 2x3 grid of scalar fields for El Niño and La Niña conditions across specified variables.
+    Plot a 1x2/3 grid of scalar fields for El Niño and La Niña conditions across specified variables.
     
     Parameters:
     - comp_sing: Dictionary containing data arrays for different ENSO conditions (El Niño and La Niña).
     - month: Integer representing the month index to be plotted.
     - variables: List of variable names to plot (default ['hcc', 'mcc', 'lcc']).
     """
+    if not neutral and len(comp_sing.keys()) > 2:
+        comp_sing.pop('neutral')
     width = len(comp_sing.keys())
+    # dumb double check to make same function work
     height = 0.45 if width==3 else 0.4
+    height = 0.6 if width==2 else height
     fig, axs = plt.subplots(1, width, subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)}, 
                             figsize=(24, 11), layout='constrained')
     fig.suptitle(title + f' for {calendar.month_name[month]}', fontsize=20,
@@ -468,8 +609,7 @@ def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
         # Adjust longitude range if needed
         if lon.max() > 180:
             lon = (((lon + 180) % 360) - 180)
-            lon, data = np.sort(lon), data.sel(longitude=lon)
-        
+            data['lon'] = (((data.lon + 180) % 360) - 180)
         # Create meshgrid for plotting
         lon2d, lat2d = np.meshgrid(lon, lat)
         
@@ -499,22 +639,27 @@ def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
 
 
 def main():
-    global comp_sing
-    directory = 'era5_reanal/anomalies/'    
+    global comp_sing, anom_sing, anom_rad
+    dir_anom = 'era5_reanal/anomalies/'    
+    dir_clim = 'era5_reanal/climatology/'
     # Check if files exist
-    files_exist = all(os.path.exists(os.path.join(directory, f'{comp}_{phase}.nc'))
+    files_exist_anom = all(os.path.exists(os.path.join(dir_anom, f'{comp}_{phase}.nc'))
                       for comp in ['pres', 'sing', 'rad'] 
                       for phase in ['el_nino', 'la_nina', 'neutral'])
+    files_exist_clim = all(os.path.exists(os.path.join(dir_clim, f'{comp}_{phase}.nc'))
+                      for comp in ['pres', 'sing', 'rad'] 
+                      for phase in ['el_nino', 'la_nina', 'neutral', 'clim'])
     
-    if files_exist:
+    if files_exist_anom and files_exist_clim:
         # Load existing composites
         print("Files exist. Loading composites from NetCDF files.")
-        comp_pres, comp_sing, comp_rad = load_composites(directory)
+        comp_pres, comp_sing, comp_rad = load_composites(dir_clim)
+        anom_pres, anom_sing, anom_rad = load_composites(dir_anom, clim=False)
     else:
         # Generate composites and save them
         print("Files not found. Generating composites and saving to NetCDF files.")
         era5_sing = xr.open_dataset('era5_reanal/era5_reanal_modern.nc').drop_vars('expver')
-        era5_pres = xr.open_dataset('era5_reanal/era5_reanal_pres.nc').drop_vars('expver')
+        era5_pres = xr.open_dataset('era5_reanal/era5_reanal_pres.nc').drop_vars('expver') # 'era5_reanal/era5_reanal_pres.nc
         # Load in the EIS variable too
         era5_eis = xr.open_dataset('era5_reanal/era5_lts.nc').drop_vars('expver')
         # Crop to region (also renames to lat/lon for conveinence)
@@ -550,18 +695,23 @@ def main():
         # Generate anomaly fields
         print('Calculating ERA5 Pressure Levels data')
         comp_pres = enso_composite(era5_pres, oni_idx, print_num=True)
-        print('Calculating ERA5 Single Levels data')
+        anom_pres = enso_composite_deas(era5_pres, oni_idx, weird=True)
+        print('\nCalculating ERA5 Single Levels data')
         comp_sing = enso_composite(era5_sing, oni_idx, print_num=False)
+        anom_sing = enso_composite_deas(era5_sing, oni_idx, print_num=False, weird=True)
         print('\nCalculating CERES data')
         comp_rad = enso_composite(ceres, oni_idx, print_num=True)
+        # Start with the full year for CERES
+        anom_rad = enso_composite_deas(ceres.sel(time=slice("2001-01", "2023-12")), oni_idx)
         
         # Save the generated composites
-        save_composites(comp_pres, comp_sing, comp_rad, directory)
+        save_composites(comp_pres, comp_sing, comp_rad, dir_clim)
+        save_composites(anom_pres, anom_sing, anom_rad, dir_anom)
     
     # Create anomaly fields
-    anom_sing = create_anomaly(comp_sing)
-    anom_pres = create_anomaly(comp_pres)
-    anom_rad = create_anomaly(comp_rad)
+    # anom_sing = create_anomaly(comp_sing)
+    # anom_pres = create_anomaly(comp_pres)
+    # anom_rad = create_anomaly(comp_rad)
     # Actual data analysis time!
     # Add divergence
     anom_sing = single_level_div(anom_sing, anom_pres)

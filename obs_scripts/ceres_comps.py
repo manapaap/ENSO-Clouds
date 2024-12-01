@@ -222,7 +222,7 @@ def main():
     enso.plot_enso(nino_idx)
     oni_idx = enso.load_oni_idx('misc_data/oni_index.txt')
     enso.plot_enso(oni_idx, var='oni', cutoff=0.5)
-    ceres = xr.load_dataset('misc_data/CERES_radiation.nc')
+    ceres = xr.load_dataset('ceres_data/ceres_ebaf_all.nc')
     
     # This is net surface radiation, really the only thing we care for
     var = 'sfc_net_tot_all_mon'
