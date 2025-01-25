@@ -216,8 +216,14 @@ def animate_radiation(sel_var, title='', units=''):
     return ani
 
 
+def de_seasonalize(ceres, clim_year):
+    """
+    Deseasonalizes the ceres data by subtracting the climatologiucal year
+    """
+
+
 def main():
-    global ceres
+    global ceres, el_nino, la_nina
     nino_idx = enso.load_nino_idx('misc_data/nino_all.csv')
     enso.plot_enso(nino_idx)
     oni_idx = enso.load_oni_idx('misc_data/oni_index.txt')
@@ -255,6 +261,10 @@ def main():
     print(f'El Nino Energy Imbalance: {float(el_nino_bal):.3f} W/m2')
     print(f'La Nina Energy Imbalance: {float(la_nina_bal):.3f} W/m2')
     
+    # Let's isolate the Eastern Pacific and create a time series
+    # of radiation anomalies across the same
+    ceres_anom = ceres - ceres_clim
+    ceres_ep = ceres_anom.sel(lat=slice(-30, 0), lon=slice(240, 280))
     
 
 if __name__ == '__main__':

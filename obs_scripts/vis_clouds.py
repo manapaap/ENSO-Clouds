@@ -45,7 +45,8 @@ def load_oni_idx(fpath='misc_data/oni_index.txt'):
     Loads ONI index rather than the nino 3.4 index
     """
     oni_df = pd.read_csv(fpath, sep='  ', skiprows=1, 
-                         names=['season', 'year', 'oni', 'anom'])
+                         names=['season', 'year', 'oni', 'anom'],
+                         engine='python')
     months = oni_df.season.str.slice(0, 3)
     years = oni_df.season.str.slice(4, 10)
     # Fix the weird offset

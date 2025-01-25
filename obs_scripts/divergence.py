@@ -541,12 +541,15 @@ def plot_enso_comp_multi(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims
              #   lon = (((lon + 180) % 360) - 180)
             #    lon, data = np.sort(lon), data.sel(lon=lon)
             
+            total_max = scale * max(np.abs(data.min()), np.abs(data.max()))
+            
             # Create meshgrid for plotting
             lon2d, lat2d = np.meshgrid(lon, lat)
             
             # Plot with pcolormesh
             pcm = ax.pcolormesh(lon2d, lat2d, scale * data, transform=ccrs.PlateCarree(), 
-                                shading='auto', cmap='RdBu_r')
+                                shading='auto', cmap='RdBu_r', vmin=-total_max,
+                                vmax=total_max)
             
             # Add coastlines and gridlines
             ax.coastlines()
@@ -605,7 +608,7 @@ def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
         
         # Color bar that is white at zero
         # norm = TwoSlopeNorm(vmin=data.min(), vcenter=0, vmax=data.max())
-        
+        total_max = max(np.abs(data.min()), np.abs(data.max()))
         # Adjust longitude range if needed
         if lon.max() > 180:
             lon = (((lon + 180) % 360) - 180)
@@ -615,7 +618,8 @@ def plot_enso_comp(comp_sing, month, var='sst', lims=None, title='', unit='',
         
         # Plot with pcolormesh
         pcm = ax.pcolormesh(lon2d, lat2d, data, transform=ccrs.PlateCarree(), 
-                            shading='auto', cmap='RdBu_r')
+                            shading='auto', cmap='RdBu_r', vmin=-total_max, 
+                            vmax=total_max)
         
         # Add coastlines and gridlines
         ax.coastlines()
@@ -736,9 +740,6 @@ def main():
                          names=labels, scale=1, unit='W/m2')
     
     # SST Anomalies
-    plot_enso_comp(comp_sing, month=month, var='sst', lims=cz_domain, 
-                   title='Sea Surface Temperature', unit='K',
-                       name='SST')
     plot_enso_comp(anom_sing, month=month, var='sst', lims=cz_domain,
                    title='SST Anomalies', unit='K',
                        name='SST')

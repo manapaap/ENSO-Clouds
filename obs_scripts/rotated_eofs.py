@@ -47,7 +47,7 @@ def add_enso_state(pc_enso, oni_idx):
     return pc_enso
 
 
-def plot_enso_progression(pc_enso, pc_theta, nino_idx, state='El Nino'):
+def plot_enso_progression(pc_enso, pc_theta, nino_idx, trop_anom, state='El Nino'):
     """
     Plots the progression of ENSO events with respect to indices C, E,
     and Nino 3.4 and FT anomaly. Labels peaks of each
@@ -66,6 +66,10 @@ def plot_enso_progression(pc_enso, pc_theta, nino_idx, state='El Nino'):
     filt_nin = nino_idx.query(f"enso_state == '{state}'")
     filt_nin = filt_nin.drop('enso_state', axis=1).groupby('month').mean()
     filt_nin['month'] = filt_nin.index  
+    # Trooposphere warming
+    filt_th = trop_anom.query(f"enso_state == '{state}'")
+    filt_th = filt_th.drop('enso_state', axis=1).groupby('month').mean()
+    filt_th['month'] = filt_th.index 
     # Isolate peaks- by ENSO state
     if state == 'El Nino':
         fxn = np.max
@@ -75,18 +79,22 @@ def plot_enso_progression(pc_enso, pc_theta, nino_idx, state='El Nino'):
     peak_e = int(np.where(filt['E'] == fxn(filt['E']))[0])
     peak_t = int(np.where(filt_t['PC1'] == fxn(filt_t['PC1']))[0])
     peak_nin = int(np.where(filt_nin['3.4_anom'] == fxn(filt_nin['3.4_anom']))[0])
+    peak_th = int(np.where(filt_th['theta_700_anom'] == fxn(filt_th['theta_700_anom']))[0])
     
     plt.figure()
     plt.plot(filt.month, filt.E, label=f'E Mode peaks {calendar.month_name[peak_e + 1]}', 
-             color='darkblue')
+             color='mediumblue')
     plt.plot(filt.month, filt.C, label=f'C Mode peaks {calendar.month_name[peak_c + 1]}',
-             color='deepskyblue')
+             color='aquamarine')
     plt.plot(filt_t.month, filt_t['PC1'], 
              label=f'Θ₇₀₀ PC1 peaks {calendar.month_name[peak_t + 1]}',
-             color='red')
+             color='red', linestyle='dashdot')
     plt.plot(filt_nin.month, filt_nin['3.4_anom'], 
              label=f'Nino 3.4 peaks {calendar.month_name[peak_nin + 1]}',
-             color='magenta')
+             color='magenta', linestyle='dotted')
+    # plt.plot(filt_th.month, filt_th['theta_700_anom'], 
+    #         label=f'Mean Θ₇₀₀ peaks {calendar.month_name[peak_th + 1]}',
+    #         color='coral', linestyle='dashed')
 
     plt.ylabel('Magnitude')
     plt.xlabel('Month')
@@ -143,7 +151,8 @@ def plot_enso_space(pc_enso, years=None):
     if years:
         colors = list(mcolors.BASE_COLORS)[1:]
         for n, (year, df) in enumerate(zip(years, data)):
-            plt.plot(df.E, df.C, label=year, color=colors[n])
+            plt.plot(df.E, df.C, label=year, color=colors[n], 
+                     linestyle='dashed')
             plt.scatter(df.E.iloc[-1], df.C.iloc[-1], marker='x',
                         color=colors[n])
             plt.scatter(df.E.iloc[0], df.C.iloc[0], marker='o',
@@ -155,7 +164,7 @@ def plot_enso_space(pc_enso, years=None):
     plt.legend()
     plt.grid()
     plt.show()    
-            
+             
 
 def main():
     global pc_enso, era5_anom, pc_theta
@@ -170,17 +179,54 @@ def main():
     pc_enso = add_enso_state(pc_enso, oni_idx)
     pc_theta = add_enso_state(pc_theta, oni_idx)
     nino_idx = add_enso_state(nino_idx, oni_idx)
+    # Actual heating anomaly?
+    trop_anom = corr.domain_anom(era5_anom, 'theta_700')
+    trop_anom = add_enso_state(trop_anom, oni_idx)
     
-    plot_enso_progression(pc_enso, pc_theta, nino_idx, 
+    plot_enso_progression(pc_enso, pc_theta, nino_idx, trop_anom,
                           state='El Nino')
-    plot_enso_progression(pc_enso, pc_theta, nino_idx, 
+    plot_enso_progression(pc_enso, pc_theta, nino_idx, trop_anom,
                           state='La Nina')
     
-    plot_enso_space(pc_enso, [2023, 2015])
+    plot_enso_space(pc_enso, [2023, 2015, 2020, 2000])
+    
+    # Comparing the lead-lad relationships
+    corr.plot_combined(nino_idx['3.4_anom'], pc_enso['PC1'],
+                      era5_anom.time, '3.4 Anom', 'SST PC1',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(nino_idx['3.4_anom'], pc_enso['E'],
+                      era5_anom.time, '3.4 Anom', 'E',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(nino_idx['3.4_anom'], pc_enso['C'],
+                      era5_anom.time, '3.4 Anom', 'C',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(pc_enso['E'], pc_theta['PC1'],
+                      era5_anom.time, 'E Mode', 'Θ₇₀₀ PC1',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(pc_enso['C'], pc_theta['PC1'],
+                      era5_anom.time, 'C Mode', 'Θ₇₀₀ PC1',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    # Does mean tropospheric heating respond differently?
+    theta_anom = corr.domain_anom(era5_anom, 'theta_700')
+    
+    corr.plot_combined(pc_enso['E'], theta_anom['theta_700_anom'],
+                      era5_anom.time, 'E Mode', 'Mean Θ₇₀₀',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(pc_enso['C'], theta_anom['theta_700_anom'],
+                      era5_anom.time, 'C Mode', 'Mean Θ₇₀₀',
+                      'Months', '', 0, 0, sig=0.99)
+    
+    corr.plot_combined(pc_theta['PC1'], theta_anom['theta_700_anom'],
+                      era5_anom.time, 'Θ₇₀₀ PC1', 'Mean Θ₇₀₀',
+                      'Months', '', 0, 0, sig=0.99)
     
     
 if __name__ == '__main__':
     main()
-    
-    
 

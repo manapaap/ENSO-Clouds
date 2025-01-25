@@ -30,6 +30,8 @@ from obs_scripts.divergence import crop_era5
 
 
 cz_domain = [-30, 30, 120, -80]
+# For plotting correlations and scalar
+ep_domain = [-30, 0, 120, 40]
 
 
 def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.95, mode='corr'):
@@ -274,14 +276,14 @@ def plot_corr(corr_field, title='', lims=cz_domain, cbar_lab='R',
     
     Slope_val determines percentile bounds for slope plot
     """
+    # corr_field = corr_field.copy(deep=True)
     # Define central longitude to correctly handle global data
     proj = ccrs.PlateCarree(central_longitude=180)
     
     # Ensure longitude wraps correctly if in 0-360 range
     if corr_field.lon.max() > 180:
-        corr_field = corr_field.assign_coords(lon=(((corr_field.lon + 180) % 360) - 180))
+        corr_field['lon'] = ((corr_field.lon + 180) % 360) - 180
         corr_field = corr_field.sortby('lon')
-    
     # Extract data for plotting
     lon = corr_field.lon.values
     lat = corr_field.lat.values
@@ -358,7 +360,8 @@ def domain_anom(era5_anom, var):
 
 def calc_eis(era5_eis):
     """
-    Calculates estimated inversion strength of dataarray and returns the same
+    Calculates estimated inversion strength of dataarray and returns the same,
+    per Wood, 2006
     
     also returns theta_700
     """
@@ -373,18 +376,40 @@ def calc_eis(era5_eis):
     return (theta_700 - t_1000), theta_700
 
 
-def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True):
+def rel_to_spec(era5_eis, pres_level):
+    """
+    Converts relative to specific humidity
+    
+    returns specific humidity at same pressure level (ex. q_700)
+    """
+    pass
+
+
+def calc_ectei(era5_eis):
+    """
+    TODO: Calculates ECTEI as per Kawai, 2017
+    
+    Assumes we aready have EIS in the dataarray
+    """
+    ectei = era5_eis['eis'] - 0.23 * 8
+    pass
+    
+
+def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, equat=False):
     """
     Calculates the first EOF of the SST anomalies across the Pacific.
     Prints explained variance as well.
     """
-    era5_anom = era5_anom[var]
+    era5_anom = era5_anom[var].copy()
     # Adjust longitude coordinates to range 0-360 if necessary
     if era5_anom.lon.min() < 0:
         era5_anom = era5_anom.assign_coords(lon=(era5_anom.lon % 360))
         era5_anom = era5_anom.sortby('lon')
     # Sort by latitude as well if necessary
     era5_anom = era5_anom.sortby('lat')
+    if equat:
+        # Reduce our area to equator as per Takahashi
+        era5_anom = era5_anom.sel(lat=slice(-10, 10))
     # Initialize EOF solver
     solver = Eof(era5_anom)
     # Calculate the first EOF
@@ -433,7 +458,7 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     lags = correlation_lags(len(series1), len(series2), 'same')
     correl = correlate(series1 / np.std(series1), series2 / np.std(series2),
                        'same')
-    max_lag = lags[correl == correl.max()]
+    max_lag = lags[abs(correl) == abs(correl).max()]
     correl /= len(series1)
     # Significance thresholds for R
     n = len(lags)
@@ -494,7 +519,11 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     axs[1, 1].set_xlabel(f'Lag ({dt})')
     axs[1, 1].set_ylabel('R')
     axs[1, 1].grid()
-    axs[1, 1].set_title(f'{name1} Leads {name2} by {-max_lag[0]} {dt}')
+    if max_lag[0] < 0:
+        diff = 'Leads'
+    else:
+        diff = 'Lags'
+    axs[1, 1].set_title(f'{name1} {diff} {name2} by {abs(max_lag[0])} {dt}')
     axs[1, 1].legend()
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to fit title and labels
@@ -633,6 +662,7 @@ def main():
         era5_sing['t_500'] = era5_eis['t'].sel(pressure_level=500)
         era5_sing['w_700'] = era5_eis['w'].sel(pressure_level=700)
         era5_sing['rh_700'] = era5_eis['r'].sel(pressure_level=700)
+        era5_sing['rh_1000'] = era5_eis['r'].sel(pressure_level=1000)
         era5_sing['speed'] = np.hypot(era5_sing['u10'], era5_sing['v10'])
         era5_sing['pv_700'] = era5_eis['pv'].sel(pressure_level=700)
         era5_sing['pv_500'] = era5_eis['pv'].sel(pressure_level=500)
@@ -722,7 +752,7 @@ def main():
     # Calculate correlations    
     sig = 0.99
     # Can set this to 1 if we want to see the vars directly
-    if True:        
+    if False:        
         # Let's skip plotting low clouds constantly until we need the        
         corr = calc_corr_field(era5_anom, cloud_class, 'sst', sig=sig)
         plot_corr(corr, cbar_lab='R',
@@ -795,28 +825,21 @@ def main():
               title='Correlation Between Θ₇₀₀ Anom and Θ₇₀₀ PC1 (24.65% Variance)')
     
     # Let's correlate the ENSO PC to the Theta_700 pc
-    eof, pc_enso = calc_eof(era5_anom, var='sst', n_pc=4, plot=False)
+    eof, pc_enso = calc_eof(era5_anom, var='sst', n_pc=4, plot=False,
+                            equat=False)
 
-    plot_combined(pc_enso['PC1'], pc_700['PC1'],
-                  era5_anom.time, 'SST PC1', 'Θ₇₀₀ PC1',
-                  'Months', '', 38.71, 24.66, sig=0.99)
-    
-    plot_combined(pc_enso['PC1'], pc_enso['PC2'],
-                  era5_anom.time, 'SST PC1', 'SST PC2',
-                  'Months', '', 38.71, 9.06, sig=0.99)
     # This is quite unusual, so let's check for domain mean Theta_700
     # Continued in tropic_corr.py...
-    corr = calc_corr_vect(era5_anom, 'sst', pc_enso, 'PC2', sig=sig)
-    plot_corr(corr, cbar_lab='R',
-              title='Correlation Between SST PC2 and SST (9.06% Variance)')
-    
-    # This matches the pattern of more low clouds in SEP and less in NEP
-    corr = calc_corr_vect(era5_anom, 'lcc', pc_enso, 'PC2', sig=sig)
-    plot_corr(corr, cbar_lab='R',
-              title='Correlation Between SST PC2 and LCC (9.06% Variance)')
     
     # Alert! Rotated EOFS!
     pc_enso = rotate_enso_eof(pc_enso)
+    
+    corr = calc_corr_vect(era5_anom, 'sst', pc_enso, 'E', sig=sig)
+    plot_corr(corr, cbar_lab='R',
+              title='Correlation Between SST and E Mode')
+    corr = calc_corr_vect(era5_anom, 'sst', pc_enso, 'C', sig=sig)
+    plot_corr(corr, cbar_lab='R',
+              title='Correlation Between SST and C Mode')    
     
     corr = calc_corr_vect(era5_anom, 'lcc', pc_enso, 'C', sig=sig)
     plot_corr(corr, cbar_lab='R',
@@ -839,6 +862,9 @@ def main():
                   era5_anom.time, '3.4 Anom', 'E',
                   'Months', '', 0, 0, sig=0.99)
     # This explains the lagged free troposphere response compared to Nino 3.4!
+    
+    # Save ENSO-PCs to be used at-will
+    pc_enso.to_csv('misc_data/enso_pcs.csv', index=False)
     
 if __name__ == '__main__':
     main()

@@ -105,15 +105,50 @@ def main():
     pc_pac = corr.rotate_enso_eof(pc_pac)
     
     # Compare to the rotated EOFs
-    corr_e = corr.calc_corr_vect(t_700_globe, 'theta_700', pc_pac,
+    corr_e = corr.calc_corr_vect(era5_anom_trop, 'theta_700', pc_pac,
                                  'E', sig=0.99)
-    corr.plot_corr(corr_e, cbar_lab='R',
+    corr.plot_corr(corr_e, cbar_lab='R', lims=[-30, 30],
                    title='Correlation Between E Mode and Theta 700')
     
-    corr_c = corr.calc_corr_vect(t_700_globe, 'theta_700', pc_pac,
+    corr_c = corr.calc_corr_vect(era5_anom_trop, 'theta_700', pc_pac,
                                  'C', sig=0.99)
-    corr.plot_corr(corr_c, cbar_lab='R',
+    corr.plot_corr(corr_c, cbar_lab='R', lims=[-30, 30],
                    title='Correlation Between C Mode and Theta 700')
+    
+    corr_e = corr.calc_corr_vect(era5_anom_trop, 'lcc', pc_pac,
+                                 'E', sig=0.99)
+    corr.plot_corr(corr_e, cbar_lab='R', lims=[-30, 30],
+                   title='Correlation Between E Mode and LCC')
+    
+    corr_c = corr.calc_corr_vect(era5_anom_trop, 'lcc', pc_pac,
+                                 'C', sig=0.99)
+    corr.plot_corr(corr_c, cbar_lab='R', lims=[-30, 30],
+                   title='Correlation Between C Mode and LCC')
+    
+    corr.plot_combined(pc_pac['E'], t_700_out['theta_700_anom'], 
+                      era5_anom_trop.time, 'E Mode', 'Mean Θ₇₀₀',
+                      'Months', 'Tropics outside Pacfic', '', '', sig=0.99)
+    
+    corr.plot_combined(pc_pac['E'], t_700_globe['theta_700_anom'], 
+                      era5_anom_trop.time, 'E Mode', 'Mean Θ₇₀₀',
+                      'Months', 'All Tropics', '', '', sig=0.99)
+    
+    corr.plot_combined(pc_pac['E'], t_700_in['theta_700_anom'], 
+                      era5_anom_trop.time, 'E Mode', 'Mean Θ₇₀₀',
+                      'Months', 'Tropical Pacific', '', '', sig=0.99)
+    
+    corr.plot_combined(pc_pac['C'], t_700_out['theta_700_anom'], 
+                      era5_anom_trop.time, 'C Mode', 'Mean Θ₇₀₀',
+                      'Months', 'Tropics outside Pacfic', '', '', sig=0.99)
+    
+    corr.plot_combined(pc_pac['C'], t_700_globe['theta_700_anom'], 
+                      era5_anom_trop.time, 'C Mode', 'Mean Θ₇₀₀',
+                      'Months', 'All Tropics', '', '', sig=0.99)
+    
+    corr.plot_combined(pc_pac['C'], t_700_in['theta_700_anom'], 
+                      era5_anom_trop.time, 'C Mode', 'Mean Θ₇₀₀',
+                      'Months', 'Tropical Pacific', '', '', sig=0.99)
+    
     
     
 if __name__ == '__main__':
