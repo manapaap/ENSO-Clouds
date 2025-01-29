@@ -30,8 +30,6 @@ from obs_scripts.divergence import crop_era5
 
 
 cz_domain = [-30, 30, 120, -80]
-# For plotting correlations and scalar
-ep_domain = [-30, 0, 120, 40]
 
 
 def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.95, mode='corr'):
@@ -67,7 +65,7 @@ def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.95, mode='corr'):
     return sig_corr
 
 
-def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.95, mode='corr'):
+def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     """
     Calculates the correlation between a field and a vector (e.g., Nino 3.4).
     
@@ -270,7 +268,7 @@ def plot_scalar_field(data, title='',  lims=cz_domain, cbar_lab='LCC (Frac)'):
     
     
 def plot_corr(corr_field, title='', lims=cz_domain, cbar_lab='R',
-              shrink=0.65, mode='corr', contour=False):
+              shrink=0.65, mode='corr', contour=False, cz_corr=True):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     
@@ -338,7 +336,10 @@ def plot_corr(corr_field, title='', lims=cz_domain, cbar_lab='R',
     # Set plot limits if specified
     if lims is not None and len(lims) == 4:
         ax.set_ylim(lims[0], lims[1])
-        ax.set_xlim(lims[3] + 20, lims[2] - 20)
+        if cz_corr:
+            ax.set_xlim(lims[3] + 20, lims[2] - 20)
+        else:
+            ax.set_xlim(lims[3], lims[2])
     if lims is not None and len(lims) == 2:
         # Set to tropics still
         ax.set_ylim(lims[0], lims[1])
@@ -358,15 +359,16 @@ def domain_anom(era5_anom, var):
     return pd.DataFrame(df)
     
 
-def calc_eis(era5_eis):
+def calc_eis(era5_eis, truncate=True):
     """
     Calculates estimated inversion strength of dataarray and returns the same,
     per Wood, 2006
     
     also returns theta_700
     """
-    # Remove last month since our single levels data doesn't have that
-    era5_eis = era5_eis[{'time':slice(0, len(era5_eis.time) - 1)}]
+    if truncate:
+        # Remove last month since our single levels data doesn't have that
+        era5_eis = era5_eis[{'time':slice(0, len(era5_eis.time) - 1)}]
     t_700 = era5_eis.sel(pressure_level=700)['t']
     t_1000 = era5_eis.sel(pressure_level=1000)['t']
     
@@ -395,7 +397,7 @@ def calc_ectei(era5_eis):
     pass
     
 
-def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, equat=False):
+def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all'):
     """
     Calculates the first EOF of the SST anomalies across the Pacific.
     Prints explained variance as well.
@@ -407,9 +409,11 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, equat=False):
         era5_anom = era5_anom.sortby('lon')
     # Sort by latitude as well if necessary
     era5_anom = era5_anom.sortby('lat')
-    if equat:
+    if region=='equator':
         # Reduce our area to equator as per Takahashi
         era5_anom = era5_anom.sel(lat=slice(-10, 10))
+    elif region=='tropics':
+        era5_anom = era5_anom.sel(lat=slice(-30, 30))
     # Initialize EOF solver
     solver = Eof(era5_anom)
     # Calculate the first EOF
@@ -451,6 +455,8 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     dt: Time unit (e.g., 'days' or 'months') for labeling the lag plot.
     title: Title for the figure.
     """
+    series1 = series1.copy(deep=True)
+    series2 = series2.copy(deep=True)
     # Calculate linear regression for scatter plot
     reg = linregress(series1, series2)
     
@@ -826,7 +832,7 @@ def main():
     
     # Let's correlate the ENSO PC to the Theta_700 pc
     eof, pc_enso = calc_eof(era5_anom, var='sst', n_pc=4, plot=False,
-                            equat=False)
+                            region='equator')
 
     # This is quite unusual, so let's check for domain mean Theta_700
     # Continued in tropic_corr.py...

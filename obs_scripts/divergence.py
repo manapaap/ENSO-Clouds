@@ -327,7 +327,7 @@ def crop_era5(xr_array, rename=True, coord='180', domain=cz_domain,
     
     Returns the region OUTSIDE our box if mode=='outside'
     """
-    min_lat, max_lat, east_lon, west_lon = cz_domain
+    min_lat, max_lat, east_lon, west_lon = domain
     
     if rename:
         xr_array = xr_array.rename({'latitude': 'lat', 'longitude': 'lon'})

@@ -245,8 +245,8 @@ def plot_regression(arr1, arr2, xlabel='', ylabel='', title=''):
     plt.scatter(arr1, arr2, label='Observations')
     plt.grid()
     plt.plot(x_range, reg.slope * x_range + reg.intercept, label=\
-             f'R²={reg.rvalue**2:.2f}'+ f'\np = {reg.pvalue:.3f}' +\
-                 f'\nm={reg.slope:.1f}',
+             f'R²={reg.rvalue**2:.3f}'+ f'\np = {reg.pvalue:.3f}' +\
+                 f'\nm={reg.slope:.3f}',
              linestyle='dashed', color='red')
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
@@ -349,7 +349,7 @@ def seasonal_cc_change(era5_ep, syn_ep):
 
 
 def main():
-    global ceres_ep, ep_cp_idx, impact, anom_ep, era5_ep, syn_ep
+    global ceres_ep, ep_cp_idx, impact, anom_ep, era5_ep, syn_ep, anom_rad
     file_ceres = 'era5_reanal/timeseries/ceres_ebaf.nc'
     dir_anom = 'era5_reanal/anomalies/'  
     file_era5 = 'era5_reanal/timeseries/era5_anom.nc'
