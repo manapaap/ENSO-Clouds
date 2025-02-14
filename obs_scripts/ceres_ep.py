@@ -18,6 +18,7 @@ os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # composites are generated and used to construct El Nino/La Nina anomaly fields
 from obs_scripts.divergence import load_composites
 import obs_scripts.vis_clouds as enso
+import obs_scripts.cloud_corr as cloud
 
 
 # Thermocline depth parameter
@@ -400,12 +401,22 @@ def main():
     rad_type(ceres_ep, oni_idx, 2020, anom_rad)
     
     # Analyze quantitatively the cumulative impact based on ENSO pattern
-    ep_cp_idx = ep_cp_ensos(pc_enso)
-    impact = ep_rad_impacts(ceres_ep, oni_idx)
+    # (didnt pan out)
+    # ep_cp_idx = ep_cp_ensos(pc_enso)
+    # impact = ep_rad_impacts(ceres_ep, oni_idx)
     # Left join of data
-    impact = impact.merge(ep_cp_idx, how='left')    
-    plot_cooling_cont(impact)
+    # impact = impact.merge(ep_cp_idx, how='left')    
+    # plot_cooling_cont(impact)
     
-
+    # We can check the era5-like lag relationships with C/E
+    lcc_syn = syn_ep['cldarea_low_mon'].mean(dim=['lat', 'lon'])
+    cloud.plot_combined(pc_enso['C'][12:], lcc_syn, syn_ep.time, 
+                        'C', 'syn lcc')
+    # Roughly in-phase, no relationship with E/PC1
+    lcc_era5 = era5_ep['lcc'].mean(dim=['lat', 'lon'])
+    cloud.plot_combined(pc_enso['C'], lcc_era5, era5_ep.time, 
+                        'C', 'era5 lcc')
+    # lag is far more distinnct!
+    
 if __name__ == '__main__':
     main()

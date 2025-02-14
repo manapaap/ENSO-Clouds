@@ -10,9 +10,10 @@ https://www.ncei.noaa.gov/products/international-satellite-cloud-climatology
 
 
 import urllib
-from os import chdir
+from os import chdir, path
 from bs4 import BeautifulSoup
 import sys
+import time
 
 
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/ISCCP_clouds')
@@ -51,14 +52,17 @@ def download_files(links, base_url):
     num = len(links)
     for n, link in enumerate(links):
         progress_bar(n, num)
-        
-        urllib.request.urlretrieve(base_url + link, link[24:31] + '.nc')
-    
+        # Download the file
+        if not path.exists(link[30:37] + '.nc'):
+            # DOn't redownload if aready exists
+            urllib.request.urlretrieve(base_url + link, link[30:37] + '.nc')
+            # Prevent excess server pings
+            time.sleep(1)
     
     
 def main():
     base_url = 'https://www.ncei.noaa.gov/data/international-satellite-cloud-' +\
-        'climate-project-isccp-h-series-data/access/isccp/hgm/'
+        'climate-project-isccp-h-series-data/access/isccp-basic/hgm/'
     links = get_urls(base_url)
     
     download_files(links, base_url)

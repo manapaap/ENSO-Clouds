@@ -20,6 +20,7 @@ from eofs.xarray import Eof
 from scipy.stats import t, linregress
 from scipy.signal import correlate, correlation_lags, detrend
 import gc
+from climlab.utils.thermo import qsat
 
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
@@ -32,7 +33,7 @@ from obs_scripts.divergence import crop_era5
 cz_domain = [-30, 30, 120, -80]
 
 
-def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.95, mode='corr'):
+def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.99, mode='corr'):
     """
     Calculates the correlation betwen two (already mean subtracted) fields
     in the xr dataset
@@ -103,7 +104,7 @@ def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     return sig_corr
 
 
-def calc_corr_vect_monthly(xr_ds, var1, vect, var2='3.4_anom', sig=0.95, mode='corr'):
+def calc_corr_vect_monthly(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     """
     Calculates the monthly correlation between a field and a vector (e.g., Nino 3.4), 
     with each month treated separately.
@@ -362,29 +363,36 @@ def domain_anom(era5_anom, var):
 def calc_eis(era5_eis, truncate=True):
     """
     Calculates estimated inversion strength of dataarray and returns the same,
-    per Wood, 2006
+    per Wood, 2006 also returns theta_700 and LTS for the sake of it
     
-    also returns theta_700
+    I adapted code from climlab.utils.thermo to fix some errors with my prev
+    code. Still call their module for other things. Just wanted to ensure
+    compatibity with xr objects
     """
     if truncate:
         # Remove last month since our single levels data doesn't have that
         era5_eis = era5_eis[{'time':slice(0, len(era5_eis.time) - 1)}]
     t_700 = era5_eis.sel(pressure_level=700)['t']
     t_1000 = era5_eis.sel(pressure_level=1000)['t']
-    
+    # Interpolate T 850
+    t_850 = (t_700 + t_1000) / 2    
+    # Get LCL
+    T_adj = t_1000 - 55
+    lcl = (1004 / 9.8) * (T_adj - ((T_adj)**-1 - (np.log(0.8) / 2840))**-1)
     # R/cp from wikipedia
     theta_700 = t_700 * (1000 / 700)**(0.286)
-    # Since theta = T at surface reference pressure
-    return (theta_700 - t_1000), theta_700
-
-
-def rel_to_spec(era5_eis, pres_level):
-    """
-    Converts relative to specific humidity
-    
-    returns specific humidity at same pressure level (ex. q_700)
-    """
-    pass
+    # Get LTS
+    LTS = (theta_700 - t_1000)
+    # 850 HPa moist adiabat gradient
+    Lv = 2.5 * 10**6
+    numer = 1.0 + (Lv * qsat(t_850, 850)) / (287 * t_850)
+    denom = 1.0 + (Lv**2 * qsat(t_850, 850)) / (1004 * 461.5 * t_850**2)
+    Gamma = (9.8 / 1004) * (1 - numer / denom)
+    # use the hydrostatic relation
+    z_700 = (287 * t_1000 / 9.8) * np.log(1000 / 700)
+    # Put it all together!
+    EIS = LTS - Gamma * (z_700 - lcl)
+    return EIS, LTS, theta_700
 
 
 def calc_ectei(era5_eis):
@@ -397,12 +405,19 @@ def calc_ectei(era5_eis):
     pass
     
 
-def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all'):
+def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
+             detrend=False):
     """
     Calculates the first EOF of the SST anomalies across the Pacific.
     Prints explained variance as well.
-    """
-    era5_anom = era5_anom[var].copy()
+    
+    Also does a linear detrend if asked for
+    """    
+    # Retains dataset object for now
+    era5_anom = era5_anom[[var]].copy()
+    if detrend:
+        era5_anom = era5_anom.map(lambda da: polyfit_detrend(da, 'time'))
+    era5_anom = era5_anom[var]
     # Adjust longitude coordinates to range 0-360 if necessary
     if era5_anom.lon.min() < 0:
         era5_anom = era5_anom.assign_coords(lon=(era5_anom.lon % 360))
@@ -444,8 +459,8 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all'):
     return solver, pcs_df
 
     
-def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
-                  var1, var2, sig=0.99, norm=True):
+def plot_combined(series1, series2, time_axis, name1, name2, dt='months', 
+                  title='', sig=0.99, norm=True, cutoff=12):
     """
     Creates a set of subplots with time series, 1D correlation, and lag plots.
     
@@ -455,8 +470,8 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     dt: Time unit (e.g., 'days' or 'months') for labeling the lag plot.
     title: Title for the figure.
     """
-    series1 = series1.copy(deep=True)
-    series2 = series2.copy(deep=True)
+    series1 = series1.copy()
+    series2 = series2.copy()
     # Calculate linear regression for scatter plot
     reg = linregress(series1, series2)
     
@@ -470,13 +485,28 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     n = len(lags)
     # Since we lose degrees of freedom with more lag
     n_vect = n - abs(lags)
+    # We need to now adjust this by the autocorrelation
+    auto_1 = correlate(series1 / np.std(series1), series1 / np.std(series1),
+                       'same') / len(series1)
+    auto_2 = correlate(series2 / np.std(series2), series2 / np.std(series2),
+                       'same') / len(series1)
+    auto_1 = auto_1[lags == 1]
+    auto_2 = auto_2[lags == 1]
+    n_vect = n_vect * (1 - auto_1 * auto_2) / (1 + auto_1 * auto_2)
     # Adjust sig_level for two-tailed test
     adjusted_sig = 1 - (1 - sig) / 2
     t_crit = t.ppf(adjusted_sig, df=n_vect - 2)
     correl_min = -t_crit / np.sqrt(n_vect - 2 + t_crit**2)
     correl_max = t_crit / np.sqrt(n_vect - 2 + t_crit**2)
+    # Let's now isolate it to +- 2 years range max
+    correl = correl[abs(lags) < cutoff]
+    correl_min = correl_min[abs(lags) < cutoff]
+    correl_max = correl_max[abs(lags) < cutoff]
+    lags = lags[abs(lags) < cutoff]
     # Normalization
     if norm:
+        series1_og = series1.copy()
+        series2_og = series2.copy()
         series1 /= np.std(series1)
         series2 /= np.std(series2)
     # Set up the subplots    
@@ -493,28 +523,23 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     ax_top.grid()
     ax_top.legend()
     ax_top.set_title(title)
-    
     # Turn off the underlying axes
     axs[0, 0].get_yaxis().set_visible(False)
     axs[0, 0].get_xaxis().set_visible(False)
     axs[0, 1].get_xaxis().set_visible(False)
     axs[0, 1].get_yaxis().set_visible(False)
-    
     # Bottom left plot: Scatter plot with regression line
-    axs[1, 0].scatter(series1, series2, color='black', alpha=0.7, s=17.5)
-    axs[1, 0].plot(series1, reg.slope * series1 + reg.intercept, 
+    axs[1, 0].scatter(series1_og, series2_og, color='black', alpha=0.7, s=17.5)
+    axs[1, 0].plot(series1_og, reg.slope * series1 + reg.intercept, 
                    linestyle='dashed', color='red', linewidth=3, zorder=10)
-    if var1:
-        axs[1, 0].set_xlabel(name1 + f' ({var1}% variance)')
-        axs[1, 0].set_ylabel(name2 + f' ({var2}% variance)')
-    else:
-        axs[1, 0].set_xlabel(name1)
-        axs[1, 0].set_ylabel(name2)
+    axs[1, 0].set_xlabel(name1)
+    axs[1, 0].set_ylabel(name2)
     axs[1, 0].grid()
     axs[1, 0].set_title(f'Scatter Plot (R² = {reg.rvalue**2:.3f})')
-    
-    # Bottom right plot: Lag plot
+    # Bottom right plot: Lag plot    
     axs[1, 1].plot(lags, correl, label='Pearson Correlation', zorder=10, color='black')
+    axs[1, 1].plot(lags, correl**2, label='Variance Explained', zorder=9, 
+                   color='black', linestyle='dashed')
     axs[1, 1].fill_between(lags, y1=correl_min, y2=correl_max, alpha=0.25,
                            color='red', label=f'Not Significant at {sig}', zorder=1,
                            linewidth=3.5)
@@ -525,6 +550,10 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     axs[1, 1].set_xlabel(f'Lag ({dt})')
     axs[1, 1].set_ylabel('R')
     axs[1, 1].grid()
+    # Axis lims for clarity
+    max_height = np.max(correl) + 0.05
+    min_height = np.min([np.min(correl) - 0.05, 0])
+    axs[1, 1].set_ylim(min_height, max_height)
     if max_lag[0] < 0:
         diff = 'Leads'
     else:
@@ -534,6 +563,8 @@ def plot_combined(series1, series2, time_axis, name1, name2, dt, title,
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout to fit title and labels
     plt.show() 
+    
+    return lags, correl
 
 
 def polyfit_detrend(dataarray, dim='time'):
@@ -664,7 +695,7 @@ def main():
         ceres_ebaf = ceres_ebaf.assign_coords(time=new_time)
         
         # Calculate EIS and others and add to single level data
-        era5_sing['eis'], era5_sing['theta_700'] = calc_eis(era5_eis)
+        era5_sing['eis'], era5_sing['lts'], era5_sing['theta_700'] = calc_eis(era5_eis)
         era5_sing['t_500'] = era5_eis['t'].sel(pressure_level=500)
         era5_sing['w_700'] = era5_eis['w'].sel(pressure_level=700)
         era5_sing['rh_700'] = era5_eis['r'].sel(pressure_level=700)
@@ -824,7 +855,7 @@ def main():
         
     # LEt's corrlate this with the ENSO PC1 since that captures the spacial
     # variance of this better
-    eof, pc_700 = calc_eof(era5_anom, var='theta_700', n_pc=4, plot=False)
+    eof, pc_700 = calc_eof(era5_anom, var='theta_700', n_pc=1, plot=False)
     # The plots look very similar to Nino 3.4 correlation, so we ignore this
     corr = calc_corr_vect(era5_anom, 'theta_700', pc_700, 'PC1', sig=sig)
     plot_corr(corr, cbar_lab='R',
@@ -858,15 +889,15 @@ def main():
     overlap_nino = nino_idx.query('2000 <= year <= 2023')
     plot_combined(overlap_nino['3.4_anom'], pc_enso['PC1'],
                   era5_anom.time, '3.4 Anom', 'PC1',
-                  'Months', '', 0, 0, sig=0.99)
+                  'Months', '', sig=0.99)
 
     plot_combined(overlap_nino['3.4_anom'], pc_enso['C'],
                   era5_anom.time, '3.4 Anom', 'C',
-                  'Months', '', 0, 0, sig=0.99)
+                  'Months', '', sig=0.99)
 
     plot_combined(overlap_nino['3.4_anom'], pc_enso['E'],
                   era5_anom.time, '3.4 Anom', 'E',
-                  'Months', '', 0, 0, sig=0.99)
+                  'Months', '', sig=0.99)
     # This explains the lagged free troposphere response compared to Nino 3.4!
     
     # Save ENSO-PCs to be used at-will

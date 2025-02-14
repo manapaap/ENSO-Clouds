@@ -10,13 +10,13 @@ import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
-from os import chdir, listdir
+import os
 import pandas as pd
 import sys
 from matplotlib.colors import TwoSlopeNorm
 
 
-chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
+os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
 # Entire CZ model domain; min_lat, max_lat, min_lon, max_lon
 cz_domain = [-30, 30, 120, -80 + 360]
@@ -151,17 +151,6 @@ def isccp_cloud_dict():
             3: 'stratus', 6: 'stratus'}
     
     return ref, simp
-
-
-@np.vectorize
-def convert_pos_degrees(coord):
-    """
-    Converts an array of positive degrees to nevative (0-360 to -180 to 180)
-    """
-    if coord > 180:
-        return coord - 360
-    else:
-        return coord
 
 
 def filter_cloud_types(data, cloud_category, cloud_dict):
@@ -331,13 +320,12 @@ def is_enso(nino_idx, date, out=False, cutoff=0.5):
     return state
 
 
-
 def get_fnames(dirpath, season):
     """
     Gets the relevant file names to help create the enso composite
     only includes files within the season of intrest
     """
-    all_files = listdir(dirpath)
+    all_files = os.listdir(dirpath)
     
     if season == 'all':
         return all_files
@@ -437,55 +425,82 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
     return el_nino, la_nina, neutral, clim
             
 
-def main():
-    nino_idx = load_nino_idx('misc_data/nino_all.csv')
-    plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4 ')
-    oni_idx = load_oni_idx('misc_data/oni_index.txt')
-    plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5, idx='ONI ')
+def create_xarray(dirpath, to='era5_reanal/timeseries/isccp_comb.nc'):
+    """
+    Combines the individual ISCCP files into a single xarray dataarray
     
-    # cloud_ex = load_cloud_file('ISCCP_clouds/2015.12.nc')   
+    Do this in sets of 10 years because it becomes too slow alll at once
+    
+    Also saves the file
+    """
+    files = get_fnames(dirpath, 'all')
+    num = len(files)
+    # start with one file
+    decades = np.arange(1980, 2020, 10)
+    os.mkdir('ISCCP_clouds/temp')    
+    for decade in decades:
+        rel_files = [file for file in files if str(decade)[:3] in file]
+        isccp = xr.load_dataset(dirpath + rel_files[0])
+        for n, file in enumerate(rel_files[1:]):
+            progress_bar(n, num, f'combining files...{decade}')
+            next_entry = xr.load_dataset(dirpath + file)
+            # combine files sequentially to reduce memory overhead
+            isccp = xr.concat([isccp, next_entry], dim='time')  
+        # Write to temp folder
+        isccp.to_netcdf(f'ISCCP_clouds/temp/{decade}.nc')
+    # Combine the decade files!
+    files = []
+    for decade in decades:
+        files.append(xr.load_dataset(f'ISCCP_clouds/temp/{decade}.nc'))
+    isccp = xr.concat(files, dim='time')
+    # Fix dates (since they number on 15th rather than 1st)
+    new_time = pd.to_datetime(isccp.time.to_index()).to_period('M').to_timestamp()
+    isccp = isccp.assign_coords(time=new_time)
+    isccp.to_netcdf(to)
+    # delete the temp files now
+    for decade in decades:
+        os.remove(f'ISCCP_clouds/temp/{decade}.nc')
+    os.rmdir('ISCCP_clouds/temp')
+    return isccp
+
+
+def deseasonalize_isccp(isccp):
+    """
+    De-seasonalizes the data by subtracting the mean year from every entry
+    done month-by-month to reduce memory overhead
+    """
+    years = isccp.time.dt.year
+    months = isccp.time.dt.month
+    num = len(years)
+    # Calc clim
+    clim = isccp.groupby('time.month').mean(dim='time')
+    # Drop all non-numeric variables as those won't be in the climatology
+    isccp = isccp.drop_vars(list(set(isccp.keys()) - set(clim.keys())))
+    for n, (year, month) in enumerate(zip(years, months)):
+        progress_bar(n, num, f'Deseasonalizing...{int(year)}-{int(month)}')
+        isccp[{'time': n}] -= clim.sel(month=month)
+    
+    return isccp
+    
+
+def main():
+    global isccp_anom
+    nino_idx = load_nino_idx('misc_data/nino_all.csv')
+    plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4')
+    oni_idx = load_oni_idx('misc_data/oni_index.txt')
+    # plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5, idx='ONI ')
     _, cloud_dict = isccp_cloud_dict()
     
-    domain = cz_domain
-    central_longitude = 180
-    
-    el_nino, la_nina, neutral, clim = enso_composite('ISCCP_clouds/', oni_idx, 
-                                               'winter', domain=domain)
-    
-    # Variable of intrest
-    var = 'cldamt' # 'cldamt'
-    
-    plot_map(clim, title='Climatology', var=var, plot='reg',
-             central_longitude=central_longitude, domain=domain)
-    plot_map(el_nino, title='Composite El Nino', var=var, plot='reg',
-             central_longitude=central_longitude, domain=domain)
-    plot_map(la_nina, title='Composite La Nina', var=var, plot='reg',
-             central_longitude=central_longitude, domain=domain)
-    plot_map(neutral, title='Composite Neutral', var=var, plot='reg',
-             central_longitude=central_longitude, domain=domain)
-
-    # this is intresting, but most important is the differences
-    # in cloud state between each ENSO state
-    # set to zero for anything less than 10% for clarity
-    
-    
-    nino_nina_diff = el_nino.copy(deep=True)
-    nino_nina_diff[var] -= clim[var]
-    plot_map(nino_nina_diff, title='El Nino Winter',
-             var=var, domain=domain, plot='diff',
-                      central_longitude=central_longitude)
-    
-    nino_neu_diff = la_nina.copy(deep=True)
-    nino_neu_diff[var] -= clim[var]
-    plot_map(nino_neu_diff, title='La Nina Winter',
-             var=var, domain=domain, plot='diff',
-                      central_longitude=central_longitude)
-    
-    nina_neu_diff = la_nina.copy(deep=True)
-    nina_neu_diff[var] -= clim[var]
-    plot_map(nina_neu_diff, title='Neutral Winter',
-             var=var, domain=domain, plot='diff',
-                      central_longitude=central_longitude)
+    isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'
+    if os.path.exists(isccp_file):
+        isccp_anom = xr.load_dataset(isccp_file)
+    else:    
+        # Removed the old plots and ENSO calculation since it didn't use
+        # cloud types. Composites are also less useful than real data
+        isccp = create_xarray('ISCCP_clouds/', 
+                              to='era5_reanal/timeseries/isccp_comb.nc')
+        isccp_anom = deseasonalize_isccp(isccp)
+        isccp_anom.to_netcdf('era5_reanal/timeseries/isccp_anom.nc')
     
     
 if __name__ == "__main__":
