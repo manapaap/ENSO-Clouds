@@ -17,94 +17,15 @@ from matplotlib.colors import TwoSlopeNorm
 
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
+import obs_scripts.shared_funcs as share
+
 
 # Entire CZ model domain; min_lat, max_lat, min_lon, max_lon
-cz_domain = [-30, 30, 120, -80 + 360]
+cz_domain_360 = [-30, 30, 120, -80 + 360]
 ep_domain = [-30, -15, 240, 280]
-
-
-def load_nino_idx(fpath):
-    """
-    Loads the nino indices and formats it into pandas df with dates
-    
-    Source:
-        https://psl.noaa.gov/data/correlation/nina34.anom.data
-        https://psl.noaa.gov/data/timeseries/monthly/NINO34/
-    """
-    data = pd.read_csv('misc_data/nino_all.csv', header=0,
-                       names=['year', 'month', '1_2', '1_2_anom', '3',
-                              '3_anom', '4', '4_anom', '3.4', '3.4_anom'])
-    
-    data['time'] = pd.to_datetime(data['year'].astype(str) + "-" +\
-                                  data['month'].astype(str), format='%Y-%m')
-    return data
-
-
-def load_oni_idx(fpath='misc_data/oni_index.txt'):
-    """
-    Loads ONI index rather than the nino 3.4 index
-    """
-    oni_df = pd.read_csv(fpath, sep='  ', skiprows=1, 
-                         names=['season', 'year', 'oni', 'anom'],
-                         engine='python')
-    months = oni_df.season.str.slice(0, 3)
-    years = oni_df.season.str.slice(4, 10)
-    # Fix the weird offset
-    oni_df['anom'] = oni_df['oni'].astype(float)
-    oni_df['total'] = oni_df['year'].astype(int)
-    oni_df['season'] = months
-    oni_df['year'] = years.astype(float)
-    
-    season_to_month = {
-        "DJF": "01",  # January
-        "JFM": "02",  # February
-        "FMA": "03",  # March
-        "MAM": "04",  # April
-        "AMJ": "05",  # May
-        "MJJ": "06",  # June
-        "JJA": "07",  # July
-        "JAS": "08",  # August
-        "ASO": "09",  # September
-        "SON": "10",  # October
-        "OND": "11",  # November
-        "NDJ": "12"   # December
-    }
-    oni_df['month'] = oni_df['season'].map(season_to_month)
-    oni_df['time'] = pd.to_datetime(oni_df['year'].astype(str).str.slice(0, 4) +\
-                                    '-' + oni_df['month'].astype(str), format='%Y-%m')
-    
-    return oni_df
-
-
-def is_enso_oni(oni_df, date, cutoff=0.5, out=False):
-    """
-    determines if given month (as provided by date) is El Nino, La Nina, or
-    neutral depending on oni index
-    """
-    # Convert the date to a datetime object and get the 5-month window
-    date = pd.to_datetime(date, format='%Y.%m')
-    # date_start = date - pd.DateOffset(months=5)
-
-    # Select the relevant 5-month window
-    vals = oni_df.loc[(oni_df['time'] <= date) &\
-                      (oni_df['time'] >= date)]
-    
-    # Determine ENSO phase based on cutoff value
-    if (vals['anom'] >= cutoff).all():
-        state = 'El Nino'
-    elif (vals['anom'] <= -cutoff).all():
-        state = 'La Nina'
-    else: 
-        state = 'Neutral'
-    
-    # Optionally print the ENSO state
-    if out:
-        print(state)
-    
-    return state
     
 
-def load_cloud_file(fpath, domain=cz_domain):
+def load_cloud_file(fpath, domain=cz_domain_360):
     """
     Loads the cloud data file, cropping it to the CZ model region
     """
@@ -179,7 +100,7 @@ def filter_cloud_types(data, cloud_category, cloud_dict):
 
 
 def plot_map(cloud_type, var='cldamt', central_longitude=180, title='deep',
-             plot='diff', domain=cz_domain):
+             plot='diff', domain=share.cz_domain_360):
     """
     Plots a map of the cloud type in question, showing cloud amount
     in each cell
@@ -252,30 +173,6 @@ def plot_map(cloud_type, var='cldamt', central_longitude=180, title='deep',
     plt.ylabel('Latitude')
 
     plt.show()
-
-
-def plot_enso(nino, var='3.4_anom', cutoff=0.4, idx='Nino 3.4'):
-    """
-    Creates a plot of the nino 3.4 index and cutoffs
-    """
-    plt.figure()
-    plt.plot(nino['time'], nino[var], color='black')
-    plt.hlines(cutoff, xmin=nino['time'].iloc[0], xmax=nino['time'].iloc[-1],
-               linestyle='dashed', alpha=0.8, color='grey')
-    plt.hlines(-cutoff, xmin=nino['time'].iloc[0], xmax=nino['time'].iloc[-1],
-               linestyle='dashed', alpha=0.8, color='grey')
-    plt.xlabel('Years')
-    plt.ylabel(idx + 'anomaly')
-    plt.title(idx + 'Index')
-    plt.grid()    
-    ax = plt.gca()
-    ax.fill_between(nino['time'], cutoff, nino[var], 
-                    where=nino[var] > cutoff,
-                    alpha=0.6, color='red')
-    ax.fill_between(nino['time'], -cutoff, nino[var], 
-                    where=nino[var] < -0.4,
-                    alpha=0.6, color='blue')
-    plt.show()
     
 
 def is_enso(nino_idx, date, out=False, cutoff=0.5):
@@ -345,19 +242,10 @@ def get_fnames(dirpath, season):
     
     sel_files = [x for x in all_files if int(x[5:7]) in months]
     return sel_files
-   
-
-def progress_bar(n, max_val, cus_str=''):
-    """
-    I love progress bars in long loops
-    """
-    sys.stdout.write('\033[2K\033[1G')
-    print(f'Computing...{100 * (n + 1) / max_val:.2f}% complete ' + cus_str,
-          end="\r")    
 
 
 def enso_composite(dirpath, nino_idx, season='all', var='cldamt', 
-                   domain=cz_domain):
+                   domain=share.cz_domain_360):
     """
     Creates a composite map of ENSO around the equatorial pacific, returning
     three arrays for neutral, el nino, and la nina
@@ -380,8 +268,8 @@ def enso_composite(dirpath, nino_idx, season='all', var='cldamt',
     clim = None
     
     for n, fname in enumerate(to_load):
-        progress_bar(n, total)
-        enso_state = is_enso_oni(nino_idx, fname[:7])
+        share.progress_bar(n, total)
+        enso_state = share.is_enso_oni(nino_idx, fname[:7])
         # Create composite by ENSO state
         if clim is None:
             clim = load_cloud_file(dirpath + fname, domain=domain)
@@ -442,7 +330,7 @@ def create_xarray(dirpath, to='era5_reanal/timeseries/isccp_comb.nc'):
         rel_files = [file for file in files if str(decade)[:3] in file]
         isccp = xr.load_dataset(dirpath + rel_files[0])
         for n, file in enumerate(rel_files[1:]):
-            progress_bar(n, num, f'combining files...{decade}')
+            share.progress_bar(n, num, f'combining files...{decade}')
             next_entry = xr.load_dataset(dirpath + file)
             # combine files sequentially to reduce memory overhead
             isccp = xr.concat([isccp, next_entry], dim='time')  
@@ -477,7 +365,7 @@ def deseasonalize_isccp(isccp):
     # Drop all non-numeric variables as those won't be in the climatology
     isccp = isccp.drop_vars(list(set(isccp.keys()) - set(clim.keys())))
     for n, (year, month) in enumerate(zip(years, months)):
-        progress_bar(n, num, f'Deseasonalizing...{int(year)}-{int(month)}')
+        share.progress_bar(n, num, f'Deseasonalizing...{int(year)}-{int(month)}')
         isccp[{'time': n}] -= clim.sel(month=month)
     
     return isccp
@@ -485,10 +373,10 @@ def deseasonalize_isccp(isccp):
 
 def main():
     global isccp_anom
-    nino_idx = load_nino_idx('misc_data/nino_all.csv')
-    plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4')
-    oni_idx = load_oni_idx('misc_data/oni_index.txt')
-    # plot_enso(oni_idx.query('year >= 2000'), 'anom', 0.5, idx='ONI ')
+    nino_idx = share.load_nino_idx('misc_data/nino_all.csv')
+    # plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4')
+    oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
+    share.plot_enso(oni_idx.query('year >= 1983'), 'anom', 0.5, idx='ONI ')
     _, cloud_dict = isccp_cloud_dict()
     
     isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'

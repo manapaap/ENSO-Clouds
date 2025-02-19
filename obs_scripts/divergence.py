@@ -24,14 +24,7 @@ import calendar
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # We need to do the same thing as with the CERES data where annual
 # composites are generated and used to construct El Nino/La Nina anomaly fields
-from obs_scripts.vis_clouds import load_oni_idx, is_enso_oni, progress_bar
-from obs_scripts.atmos_data import plot_winds
-from obs_scripts.ceres_comps import plot_radiation
-from CZ_model.standard_funcs import interp_grid
-
-
-cz_domain = [-30, 30, 120, -80]
-ep_domain = [-30, 10, -120, -80]
+import obs_scripts.shared_funcs as share
 
 
 def mean_year(xr_array):
@@ -49,7 +42,7 @@ def mean_year(xr_array):
     # Sum each 12-month slice (each year) incrementally to avoid memory overload
     for n in range(12, 12 * (len(xr_array.time) // 12), 12):
         # Floor division then multiplication to only capture full years
-        progress_bar(n, len(xr_array.time), 'Calcuting Climatlogy')
+        share.progress_bar(n, len(xr_array.time), 'Calcuting Climatlogy')
         climatology = iterated_sum(climatology, xr_array.isel(time=slice(n, n + 12)))
 
     # Divide by the total number of years to get the mean climatological year
@@ -126,9 +119,9 @@ def enso_composite(xr_array, nino_idx, print_num=False, deas=True):
     
     # Loop over years, but align composites from May to April
     for n, yr in enumerate(range(years[0], years[-1])):
-        progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
+        share.progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
         # Check the ENSO phase in December (yr)
-        enso_state = is_enso_oni(nino_idx, f'{yr}.12')
+        enso_state = share.is_enso_oni(nino_idx, f'{yr}.12')
 
         # Select data from May (yr) to April (yr+1)
         may_to_april = xr_array.sel(time=slice(f'{yr}-04-01', f'{yr+1}-03-30')).copy(deep=True)
@@ -223,9 +216,9 @@ def enso_composite_deas(xr_array, nino_idx, print_num=False, weird=False):
 
     # Loop over years, but align composites from May to April
     for n, yr in enumerate(range(years[0], years[-1])):
-        progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
+        share.progress_bar(n, tot, f'; ENSO calc, Year: {yr}')
         # Check the ENSO phase in December (yr)
-        enso_state = is_enso_oni(nino_idx, f'{yr}.12')
+        enso_state = share.is_enso_oni(nino_idx, f'{yr}.12')
 
         # Select data from May (yr) to April (yr+1)
         may_to_april = xr_array.sel(time=slice(f'{yr}-04-01', f'{yr+1}-03-30')).copy(deep=True)
@@ -295,79 +288,8 @@ def save_composites(comp_pres, comp_sing, comp_rad, directory='era5_reanal/anoma
             print(f'Saved {phase} composite for {comp_type} to {filename}')
 
 
-def load_composites(directory='era5_reanal/anomalies/', clim=True):
-    """
-    Loads the composite dictionaries (comp_pres, comp_sing, comp_rad) from NetCDF files.
-    Returns the dictionaries with the same structure as in the script.
-    """
-    comp_pres, comp_sing, comp_rad = {}, {}, {}
-    
-    composite_dict = {'pres': comp_pres, 'sing': comp_sing, 'rad': comp_rad}
-    phases = ['el_nino', 'la_nina', 'neutral']
-    if clim:
-        phases.append('clim')
-    
-    for comp_type, comp_dict in composite_dict.items():
-        for phase in phases:
-            filename = os.path.join(directory, f'{comp_type}_{phase}.nc')
-            if os.path.exists(filename):
-                comp_dict[phase] = xr.open_dataset(filename)
-                print(f'Loaded {phase} composite for {comp_type} from {filename}')
-            else:
-                print(f'Warning: {filename} does not exist. Skipping load for {comp_type} {phase}.')
-                comp_dict[phase] = None
-    
-    return comp_pres, comp_sing, comp_rad
-
-
-def crop_era5(xr_array, rename=True, coord='180', domain=cz_domain,
-              mode='inside'):
-    """
-    Crops to CZ modeldimentions
-    
-    Returns the region OUTSIDE our box if mode=='outside'
-    """
-    min_lat, max_lat, east_lon, west_lon = domain
-    
-    if rename:
-        xr_array = xr_array.rename({'latitude': 'lat', 'longitude': 'lon'})
-    
-    if mode=='inside':
-        if coord=='180':
-            ds_east = xr_array.sel(lat=slice(max_lat, min_lat), 
-                                   lon=slice(east_lon, 180))
-            ds_west = xr_array.sel(lat=slice(max_lat, min_lat),
-                                   lon=slice(-180, west_lon))
-            df = xr.concat([ds_east, ds_west], dim="lon")
-            
-        elif coord=='360':
-            df = xr_array.sel(lat=slice(min_lat, max_lat), 
-                              lon=slice(east_lon, 360 + west_lon))
-        else:
-            print('How do you bork your own code this bad...')
-    else:
-        if coord == '180':
-            # Latitude mask (everything outside min_lat to max_lat)
-            lat_mask = ((xr_array['lat'] > max_lat) | (xr_array['lat'] < min_lat))
-        
-            # Longitude mask (everything outside east_lon to west_lon)
-            lon_mask_east = (xr_array['lon'] > east_lon) & (xr_array['lon'] <= 180)
-            lon_mask_west = (xr_array['lon'] < west_lon) & (xr_array['lon'] >= -180)
-            lon_mask = ~(lon_mask_east | lon_mask_west)  # Invert tropical Pacific region
-        
-            # Combine the masks
-            mask = lat_mask | lon_mask
-        
-            # Apply the mask
-            df = xr_array.where(mask, drop=True)
-        else:
-            print('Need to implement for 360...')
-
-    return df
-
-
 def plot_scalar(comp_dict, var, month=12, phase='la_nina', title='',
-                lims=cz_domain, cbar='HCC (Frac)'):
+                lims=share.cz_domain_180, cbar='HCC (Frac)'):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     """
@@ -451,6 +373,7 @@ def regrid_era5(comp_sing, comp_pres, comp_rad):
     """
     Regrids ERA5 data in comp_sing and comp_pres dictionaries to CERES grid dimensions.
     Uses the latitude and longitude from comp_rad['el_nino'] as the target CERES grid.
+    NOT COMPLETE
     """
     # Define CERES grid based on comp_rad
     ds_ceres_grid = xr.Dataset({
@@ -488,7 +411,7 @@ def create_anomaly(comp_dict):
     return comp_anom
 
 
-def plot_enso_comp_multi(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims=cz_domain,
+def plot_enso_comp_multi(comp_sing, month, variables=['hcc', 'mcc', 'lcc'], lims=share.cz_domain_180,
                          title='', names=['High CC', 'Mid CC', 'Low CC'],
                          scale=100, unit='%'):
     """
@@ -667,16 +590,16 @@ def main():
         # Load in the EIS variable too
         era5_eis = xr.open_dataset('era5_reanal/era5_lts.nc').drop_vars('expver')
         # Crop to region (also renames to lat/lon for conveinence)
-        era5_sing = crop_era5(era5_sing, rename=True)
-        era5_pres = crop_era5(era5_pres, rename=True)
-        era5_eis = crop_era5(era5_eis, rename=True)
+        era5_sing = share.crop_era5(era5_sing, rename=True)
+        era5_pres = share.crop_era5(era5_pres, rename=True)
+        era5_eis = share.crop_era5(era5_eis, rename=True)
                 
         ceres = xr.load_dataset('ceres_data/ceres_ebaf_all.nc')
         
         # Create column data for CERES
         ceres['atms_net_all'] = ceres['toa_net_all_mon'] - ceres['sfc_net_tot_all_mon']
         # nino_idx = load_nino_idx('misc_data/nino_all.csv')
-        oni_idx = load_oni_idx('misc_data/oni_index.txt')
+        oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
         
         # Standardize time format
         ceres['time'] = pd.to_datetime(ceres.time)
@@ -725,28 +648,30 @@ def main():
     month = 12
     
     # Plot cloud cover
-    plot_enso_comp_multi(comp_sing, month=month, lims=cz_domain, title='Composite')
+    plot_enso_comp_multi(comp_sing, month=month, lims=share.cz_domain_180, 
+                         title='Composite')
 
-    plot_enso_comp_multi(anom_sing, month=month, lims=cz_domain, title='Anomaly')
+    plot_enso_comp_multi(anom_sing, month=month, lims=share.cz_domain_180,
+                         title='Anomaly')
     
     # Plot Radiation
     variables = ['toa_net_all_mon', 'sfc_net_sw_all_mon', 'atms_net_all']
     labels = ['TOA Net', 'SFC Net', 'ATM Net']
-    plot_enso_comp_multi(comp_rad, month=month, variables=variables, lims=cz_domain, 
+    plot_enso_comp_multi(comp_rad, month=month, variables=variables, lims=share.cz_domain_180, 
                          title='Radiation Composites', names=labels, 
                          scale=1, unit='W/m2')
     plot_enso_comp_multi(anom_rad, month=month, variables=variables,
-                         lims=cz_domain, title='Radiation Anomalies', 
+                         lims=share.cz_domain_180, title='Radiation Anomalies', 
                          names=labels, scale=1, unit='W/m2')
     
     # SST Anomalies
-    plot_enso_comp(anom_sing, month=month, var='sst', lims=cz_domain,
+    plot_enso_comp(anom_sing, month=month, var='sst', lims=share.cz_domain_180,
                    title='SST Anomalies', unit='K',
                        name='SST')
-    plot_enso_comp(anom_sing, month=month, var='eis', lims=cz_domain,
+    plot_enso_comp(anom_sing, month=month, var='eis', lims=share.cz_domain_180,
                    title='EIS Anomalies', unit='K',
                        name='EIS')
-    plot_enso_comp(anom_sing, month=month, var='theta_700', lims=cz_domain,
+    plot_enso_comp(anom_sing, month=month, var='theta_700', lims=share.cz_domain_180,
                    title='700 HPa Pot. Temp. Anomalies', unit='K',
                        name='Theta 700')
     

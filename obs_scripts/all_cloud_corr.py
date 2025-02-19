@@ -13,7 +13,6 @@ We also now have data from 50 N to 50 S rather than just 30N to 30S
 
 
 import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
 import numpy as np
 import xarray as xr
 import os
@@ -27,21 +26,7 @@ import pandas as pd
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # We need to do the same thing as with the CERES data where annual
 # composites are generated and used to construct El Nino/La Nina anomaly fields
-from obs_scripts.vis_clouds import progress_bar
-from obs_scripts.divergence import crop_era5
-import obs_scripts.cloud_corr as cloud
-from obs_scripts.ceres_ep import plot_regression
-
-
-# Some domains for convenience
-cz_domain = [-30, 30, 120, -80]
-# For plotting correlations and scalar
-ep_region = [-20, 0, 240, 280] # Can make an argument for [-20, 0]
-# Larger pacific
-pac_domain = [-50, 50, 120, -60]
-# NIno 3.4
-nino_domain = [-5, 5, -170, -120]
-
+import obs_scripts.shared_funcs as share
 
 def convert_longitude(lon, to_360=True):
     """
@@ -61,7 +46,7 @@ def convert_longitude(lon, to_360=True):
         return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
 
 
-def isolate_ep(era5_data, ep_domain=ep_region, var='lcc'):
+def isolate_ep(era5_data, ep_domain=share.ep_domain_360, var='lcc'):
     """
     Isolates the EP region from larger era5 data for purposes of timeseries
     analysis over averaged quantities
@@ -225,8 +210,8 @@ def calc_oni(era5_data):
     """
     Calculates the oceanic Nino index for our data from 1940-present
     """
-    nino_data = era5_data['sst'].sel(lat=slice(*nino_domain[:2][::-1]), 
-                                     lon=slice(*nino_domain[2:]))
+    nino_data = era5_data['sst'].sel(lat=slice(*share.nino_domain[:2][::-1]), 
+                                     lon=slice(*share.nino_domain[2:]))
     nino_data = nino_data.mean(dim=['lat', 'lon'])
     
     # Need to create the base periods
@@ -310,8 +295,33 @@ def is_enso_monthly(nino_df, cutoff=0.5):
         else:
             nino_df['enso_state'].iloc[n] = 'Neutral'
     return nino_df
+
+
+def polynomial_detrend(data, time_axis, degree=3, plot=False):
+    """
+    detrends the data using a third degree
+    polynomial; assumes you know what you're
+    doing
     
+    if plot, plots the fit on the original data
+    """
+    fit = np.polynomial.polynomial.Polynomial.fit(time_axis, data,
+                                                  degree)
+    detr = data - fit(time_axis)
+    if plot:
+        fig, axs = plt.subplots(2, 1, sharex=True)
+        axs[0].plot(time_axis, data, label='original')
+        axs[0].plot(time_axis, fit(time_axis), label='fit')
+        axs[0].legend()
+        axs[0].grid()
+        
+        # linreg = linregress(time_axis, detr)
+        axs[1].plot(time_axis, detr)
+        axs[1].grid()
     
+    return detr
+    
+
 def main():    
     global era5_data, pc_enso, lcc_anom, nino_data
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
@@ -337,16 +347,16 @@ def main():
         era5_data['rh_700'] = era5_pres['r'].sel(pressure_level=700)
         era5_data['rh_1000'] = era5_pres['r'].sel(pressure_level=1000)
         era5_data['speed'] = np.hypot(era5_data['u10'], era5_data['v10'])
-        era5_data['eis'], era5_data['lts'], era5_data['theta_700'] = cloud.calc_eis(era5_pres,
+        era5_data['eis'], era5_data['lts'], era5_data['theta_700'] = share.calc_eis(era5_pres,
                                                                       truncate=False)
         
-        era5_data = crop_era5(era5_data, rename=True, domain=pac_domain)
+        era5_data = share.crop_era5(era5_data, rename=True, domain=share.pac_domain)
         # Mean year
         climatology = era5_data.groupby('time.month').mean(dim='time')
         years = np.unique(era5_data.time.dt.year)
         # Anomaly time series
         for n, year in enumerate(years):
-            progress_bar(n, len(years), 'deseasonalizing ERA5...')
+            share.progress_bar(n, len(years), 'deseasonalizing ERA5...')
             year_data = era5_data.sel(time=slice(f'{year}-01', f'{year}-12'))
             time_axis = year_data.time
             # Reassign time axis so it is consistent with the selected slice
@@ -357,37 +367,41 @@ def main():
             # Subtract climatology year by year       
             era5_data[{"time":slice(12 * n, 12 * (n + 1))}] -= climatology   
             
-        print('/nSaving to file.../n')
+        print('\nSaving to file...\n')
         era5_data.to_netcdf(file_era5)   
     
-    _, pc_enso = cloud.calc_eof(era5_data, 'sst', n_pc=2,
+    _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
     # pc_enso['PC1'] *= -1
-    pc_enso = cloud.rotate_enso_eof(pc_enso)
+    pc_enso = share.rotate_enso_eof(pc_enso)
     
     # Correlations from before
-    corr = cloud.calc_corr_vect(era5_data, 'lcc', pc_enso, 'C')
-    cloud.plot_corr(corr, cbar_lab='R', lims=pac_domain,
+    corr = share.calc_corr_vect(era5_data, 'lcc', -pc_enso, 'C')
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
               title='Correlation Between LCC and C Mode')
     
-    _, pc_700 = cloud.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
+    _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
                                 region='tropics', detrend=True)
     # The plots look very similar to Nino 3.4 correlation, so we ignore this
-    corr = cloud.calc_corr_vect(era5_data, 'theta_700', pc_700, 'PC1')
-    cloud.plot_corr(corr, cbar_lab='R', lims=pac_domain,
+    corr = share.calc_corr_vect(era5_data, 'theta_700', pc_700, 'PC1')
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
               title='Correlation Between Θ₇₀₀ Anom and Θ₇₀₀ PC1')
     
     # Single variable trajectories
-    lcc_anom = isolate_ep(era5_data, ep_region, 'lcc')
+    lcc_anom = isolate_ep(era5_data, share.ep_domain_360, 'lcc')
     theta_anom = era5_data['theta_700'].sel(lat=slice(30, -30)).mean(dim=['lat',
                                                                           'lon'])
 
     # Nino 3.4 index and ONI for our data
     nino_data = calc_oni(era5_data)
+    nino_data['simp_time'] = nino_data.year + ((nino_data.month - 1) / 12)
     # Noaa-style detrending for clouds; include other variables we want 
     # which makes analysis a little easier
-    nino_data['lcc_detr'] = 100 * noaa_detrend(lcc_anom, 10) 
+    nino_data['lcc_detr'] = 100 * polynomial_detrend(lcc_anom, nino_data['simp_time'],
+                                                     6) 
+    nino_data['lcc_clean'] = butter_lowpass_filter(nino_data['lcc_detr'], 1/8, 
+                                                   1, 4)
     nino_data[['PC1', 'C', 'E']] = pc_enso[['PC1', 'C', 'E']]
     # to make +ve eof = el nino
     nino_data[['PC1', 'C', 'E']] *= -1

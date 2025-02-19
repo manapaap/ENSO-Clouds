@@ -13,8 +13,7 @@ import calendar
 chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 
 
-import obs_scripts.vis_clouds as enso
-from CZ_model.standard_funcs import progress_bar
+import obs_scripts.shared_funcs as share
 
 
 def plot_radiation(sel_var, title='', units=''):
@@ -61,9 +60,9 @@ def enso_composite(ceres, nino_idx):
     num_neutral = 0
     
     for n, time in enumerate(ceres.time):
-        progress_bar(n, tot)
+        share.progress_bar(n, tot)
         format_date = str(time.data)[:7].replace('-', '.')
-        enso_state = enso.is_enso_oni(nino_idx, format_date)
+        enso_state = share.is_enso_oni(nino_idx, format_date)
         
         # Create composite by ENSO state
         if enso_state == 'El Nino':
@@ -123,7 +122,7 @@ def enso_composite_by_year(ceres, nino_idx, var):
     # Loop over years, but align composites from May to April
     for yr in range(years[0], years[-1]):
         # Check the ENSO phase in December (yr)
-        enso_state = enso.is_enso_oni(nino_idx, f'{yr}.12')
+        enso_state = share.is_enso_oni(nino_idx, f'{yr}.12')
 
         # Select data from May (yr) to April (yr+1)
         may_to_april = ceres.sel(time=slice(f'{yr}-05-01', f'{yr+1}-04-30'))
@@ -216,18 +215,12 @@ def animate_radiation(sel_var, title='', units=''):
     return ani
 
 
-def de_seasonalize(ceres, clim_year):
-    """
-    Deseasonalizes the ceres data by subtracting the climatologiucal year
-    """
-
-
 def main():
     global ceres, el_nino, la_nina
-    nino_idx = enso.load_nino_idx('misc_data/nino_all.csv')
-    enso.plot_enso(nino_idx)
-    oni_idx = enso.load_oni_idx('misc_data/oni_index.txt')
-    enso.plot_enso(oni_idx, var='oni', cutoff=0.5)
+    nino_idx = share.load_nino_idx('misc_data/nino_all.csv')
+    share.plot_enso(nino_idx)
+    oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
+    share.plot_enso(oni_idx, var='oni', cutoff=0.5)
     ceres = xr.load_dataset('ceres_data/ceres_ebaf_all.nc')
     
     # This is net surface radiation, really the only thing we care for

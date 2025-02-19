@@ -16,10 +16,7 @@ from scipy.stats import linregress
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # We need to do the same thing as with the CERES data where annual
 # composites are generated and used to construct El Nino/La Nina anomaly fields
-from obs_scripts.divergence import load_composites
-import obs_scripts.vis_clouds as enso
-import obs_scripts.cloud_corr as cloud
-
+import obs_scripts.shared_funcs as share
 
 # Thermocline depth parameter
 cline_depth = 100
@@ -45,7 +42,7 @@ def rad_trajectory(ceres, oni_idx, year, anom_rad, era5_ep, anom_sing):
     ocean -= ocean[0]
     trajectory = trajectory.mean(dim=['lat', 'lon'])
     
-    state = enso.is_enso_oni(oni_idx, f'{year}.12')
+    state = share.is_enso_oni(oni_idx, f'{year}.12')
     rad_state = anom_rad[state.replace(' ', '_').lower()]
     rel_traj = rad_state.sel(month=[9, 10, 11, 12, 1, 2, 3, 4])
     rel_traj = rel_traj.mean(dim=['lat', 'lon'])
@@ -111,7 +108,7 @@ def rad_type(ceres, oni_idx, year, anom_rad):
     trajectory = ceres.sel(time=slice(f'{year}-9-01', f'{year+1}-04-30'))
     trajectory = trajectory.mean(dim=['lat', 'lon'])
     
-    state = enso.is_enso_oni(oni_idx, f'{year}.12')
+    state = share.is_enso_oni(oni_idx, f'{year}.12')
     rad_state = anom_rad[state.replace(' ', '_').lower()]
     rel_traj = rad_state.sel(month=[9, 10, 11, 12, 1, 2, 3, 4])
     rel_traj = rel_traj.mean(dim=['lat', 'lon'])
@@ -229,31 +226,9 @@ def ep_rad_impacts(ceres, oni_idx):
                            'state': ''})
     
     for n, year in enumerate(impact.year):
-        impact.state[n] = enso.is_enso_oni(oni_idx, f'{year}.12')
+        impact.state[n] = share.is_enso_oni(oni_idx, f'{year}.12')
         
-    return impact    
-
-
-def plot_regression(arr1, arr2, xlabel='', ylabel='', title=''):
-    """
-    Plots the regression of arr1 and arr2, along with the best fit line
-    """
-    
-    reg = linregress(arr1, arr2)
-    x_range = np.linspace(arr1.min(), arr1.max())
-    
-    plt.figure()
-    plt.scatter(arr1, arr2, label='Observations')
-    plt.grid()
-    plt.plot(x_range, reg.slope * x_range + reg.intercept, label=\
-             f'R²={reg.rvalue**2:.3f}'+ f'\np = {reg.pvalue:.3f}' +\
-                 f'\nm={reg.slope:.3f}',
-             linestyle='dashed', color='red')
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.legend()
-    plt.show()    
+    return impact  
 
 
 def plot_cooling_cont(impact):
@@ -311,7 +286,7 @@ def plot_cloud_cover(era5_ep, syn_ep, year):
     syn_cloud = syn_ep.sel(time=slice(f'{year}-9-01', 
                                       f'{year+1}-04-30'))['cldarea_low_mon'].mean(dim=['lat', 
                                                                                        'lon'])
-    plt.plot(cloud.time, 100*cloud.data, label='ERA5')
+    plt.plot(share.time, 100*share.data, label='ERA5')
     plt.plot(syn_cloud.time, syn_cloud.data, label='CERES SYN'); plt.legend()
     plt.grid()
     plt.xlabel('Time')
@@ -371,7 +346,7 @@ def main():
         era5_ep = era5_ep.sel(lat=slice(*lat_bounds[::-1]), 
                               lon=slice(*lon_bounds))
         
-        anom_pres, anom_ep, anom_rad = load_composites(dir_anom, clim=False)
+        anom_pres, anom_ep, anom_rad = share.load_composites(dir_anom, clim=False)
         # Remember, thesee are not cropped yet
         for state, value in anom_rad.items():
             anom_rad[state] = value.sel(lat=slice(*lat_bounds), 
@@ -388,12 +363,12 @@ def main():
     # Obtain PCs and Nino index
     pc_enso = pd.read_csv('misc_data/enso_pcs.csv')
     # Contains nino 3.4 anomaly
-    nino_idx = enso.load_nino_idx('misc_data/nino_all.csv')
+    nino_idx = share.load_nino_idx('misc_data/nino_all.csv')
     nino_idx['3.4_anom'] = detrend(nino_idx['3.4_anom'])
     # Create a lagged index by arbitrary number of months
     nino_idx['3.4_anom_lag'] = nino_idx['3.4_anom'].shift(2)
     # ONI Index
-    oni_idx = enso.load_oni_idx('misc_data/oni_index.txt')
+    oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
     
     # Integrated trajectories through time
     rad_trajectory(ceres_ep, oni_idx, 2020, anom_rad, era5_ep, anom_ep)
@@ -410,11 +385,11 @@ def main():
     
     # We can check the era5-like lag relationships with C/E
     lcc_syn = syn_ep['cldarea_low_mon'].mean(dim=['lat', 'lon'])
-    cloud.plot_combined(pc_enso['C'][12:], lcc_syn, syn_ep.time, 
+    share.plot_combined(pc_enso['C'][12:], lcc_syn, syn_ep.time, 
                         'C', 'syn lcc')
     # Roughly in-phase, no relationship with E/PC1
     lcc_era5 = era5_ep['lcc'].mean(dim=['lat', 'lon'])
-    cloud.plot_combined(pc_enso['C'], lcc_era5, era5_ep.time, 
+    share.plot_combined(pc_enso['C'], lcc_era5, era5_ep.time, 
                         'C', 'era5 lcc')
     # lag is far more distinnct!
     
