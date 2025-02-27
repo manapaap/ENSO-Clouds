@@ -12,20 +12,14 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import os
 import pandas as pd
-import sys
 from matplotlib.colors import TwoSlopeNorm
 
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import obs_scripts.shared_funcs as share
 
-
-# Entire CZ model domain; min_lat, max_lat, min_lon, max_lon
-cz_domain_360 = [-30, 30, 120, -80 + 360]
-ep_domain = [-30, -15, 240, 280]
     
-
-def load_cloud_file(fpath, domain=cz_domain_360):
+def load_cloud_file(fpath, domain=share.cz_domain_360):
     """
     Loads the cloud data file, cropping it to the CZ model region
     """
@@ -367,13 +361,28 @@ def deseasonalize_isccp(isccp):
     for n, (year, month) in enumerate(zip(years, months)):
         share.progress_bar(n, num, f'Deseasonalizing...{int(year)}-{int(month)}')
         isccp[{'time': n}] -= clim.sel(month=month)
-    
     return isccp
-    
+
+
+def cloud_types(isccp_anom, cloud_dict):
+    """
+    Creates separate data variables for high, medium, Sc, and Cu cloud types
+    in isccp baased on the cldamt_type variable. Simplifies analysis and
+    code
+    """
+    clouds = list(cloud_dict.values())
+    for cloud in clouds:
+        # Subtract 1 as ISCCP is zero-indexedf
+        bins = [x - 1 for x, y in cloud_dict.items() if y == cloud]
+        data = isccp_anom.cldamt_types.sel({'cloud_type': bins})
+        isccp_anom[cloud] = data.sum(dim='cloud_type')
+    return isccp_anom
+
 
 def main():
-    global isccp_anom
-    nino_idx = share.load_nino_idx('misc_data/nino_all.csv')
+    global isccp_anom, era5_data, pc_enso
+    oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
+    oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
     # plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4')
     oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
     share.plot_enso(oni_idx.query('year >= 1983'), 'anom', 0.5, idx='ONI ')
@@ -388,7 +397,38 @@ def main():
         isccp = create_xarray('ISCCP_clouds/', 
                               to='era5_reanal/timeseries/isccp_comb.nc')
         isccp_anom = deseasonalize_isccp(isccp)
+        isccp_anom = cloud_types(isccp_anom, cloud_dict)
         isccp_anom.to_netcdf('era5_reanal/timeseries/isccp_anom.nc')
+    
+    # Let's now calculate our C/E indives to compare to the ISCCP variables
+    # This is ERA5 from all_cloud_corr.py
+    era5_data = xr.load_dataset('era5_all/timeseries/era5_anom_all.nc')
+    era5_data = era5_data.sel({'time': isccp_anom.time})
+    # Calculate our EOFs
+    _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
+                                plot=False, region='equator', detrend=True)
+    pc_enso['PC1'] *= -1
+    pc_enso = share.rotate_enso_eof(pc_enso)
+    
+    _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
+                                region='tropics', detrend=True)
+    pc_enso['PC_theta'] = -pc_700['PC1']
+    
+    pc_enso['oni'] = oni_rel['oni']
+    
+    # Correlations?
+    corr = share.calc_corr_vect(isccp_anom, 'stratus', pc_enso, 'C')
+    share.plot_corr(corr, cbar_lab='R', lims=[-50, 50], cz_corr=False,
+              title='Correlation Between ISCCP Sc and C Mode')
+    # Consistent! Let's see the low cloud anomaly
+    lcc_anom = share.isolate_ep_isccp(isccp_anom, 'stratus')
+    lcc_eq_anom = share.isolate_ep_isccp(isccp_anom, 'stratus', 
+                                   share.eqp_domain_360)
+    
+    share.plot_combined(pc_enso['C'], lcc_anom, isccp_anom.time, 
+                        'C', 'Isccp SC')
+    share.plot_combined(pc_enso['PC2'], lcc_eq_anom, isccp_anom.time, 
+                        'PC2', 'Isccp SC')
     
     
 if __name__ == "__main__":

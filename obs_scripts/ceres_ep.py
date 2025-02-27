@@ -325,14 +325,16 @@ def seasonal_cc_change(era5_ep, syn_ep):
 
 
 def main():
-    global ceres_ep, ep_cp_idx, impact, anom_ep, era5_ep, syn_ep, anom_rad
+    global lcc_syn
     file_ceres = 'era5_reanal/timeseries/ceres_ebaf.nc'
     dir_anom = 'era5_reanal/anomalies/'  
     file_era5 = 'era5_reanal/timeseries/era5_anom.nc'
     file_syn = 'era5_reanal/timeseries/ceres_syn.nc'
     
-    lat_bounds = [-20, 0]# [-20, 0]
-    lon_bounds = [255, 280]# [255, 280]
+    domain = share.eqp_domain_360 
+    
+    lat_bounds = domain[:2]
+    lon_bounds = domain[2:]
     
     files = [file_era5, file_ceres, dir_anom, file_syn]
     if all([os.path.exists(file) for file in files]):
@@ -371,7 +373,7 @@ def main():
     oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
     
     # Integrated trajectories through time
-    rad_trajectory(ceres_ep, oni_idx, 2020, anom_rad, era5_ep, anom_ep)
+    # rad_trajectory(ceres_ep, oni_idx, 2020, anom_rad, era5_ep, anom_ep)
     # Partition into longwave/shortwave
     rad_type(ceres_ep, oni_idx, 2020, anom_rad)
     
@@ -392,6 +394,13 @@ def main():
     share.plot_combined(pc_enso['C'], lcc_era5, era5_ep.time, 
                         'C', 'era5 lcc')
     # lag is far more distinnct!
+    # Check PC2 !!!
+    lcc_syn_sm = share.butter_lowpass_filter(lcc_syn, 1/6, 1)
+    
+    share.plot_combined(pc_enso['PC2'][12:], lcc_syn, syn_ep.time, 
+                        'PC2', 'syn lcc')
+    share.plot_combined(pc_enso['PC2'][12:], lcc_syn_sm, syn_ep.time, 
+                        'PC2', 'syn lcc lowpass')
     
 if __name__ == '__main__':
     main()

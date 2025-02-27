@@ -15,16 +15,23 @@ import sys
 import matplotlib.pyplot as plt
 from eofs.xarray import Eof
 from scipy.stats import t, linregress
-from scipy.signal import correlate, correlation_lags, detrend
+from scipy.signal import correlate, correlation_lags
 from climlab.utils.thermo import EIS
 import cartopy.crs as ccrs
 import os
+from scipy.optimize import curve_fit
+import scipy.stats as stats
+import scipy.signal as signal
+import warnings
 
 # Domains
 cz_domain_360 = [-30, 30, 120, -80 + 360]
-ep_domain_360 = [-30, -15, 240, 280]
+ep_domain_360 = [-20, 0, 240, 280]
 cz_domain_180 = [-30, 30, 120, -80]
-ep_domain_180 = [-30, 10, -120, -80]
+ep_domain_180 = [-20, 0, -120, -80]
+# eq ep for PC2 corr
+eqp_domain_360 = [-10, 10, 240, 280]
+eqp_domain_180 = [-10, 10, -120, -80]
 # Larger pacific
 pac_domain = [-50, 50, 120, -60]
 # NIno 3.4
@@ -447,7 +454,7 @@ def plot_scalar_field(data, title='',  lims=cz_domain_180, cbar_lab='LCC (Frac)'
     
     if lims is not None:
         ax.set_ylim(lims[0], lims[1])
-        ax.set_xlim(lims[3] + 20, lims[2] - 20)
+        ax.set_xlim(lims[3], lims[2])
     plt.show()
     
     
@@ -607,6 +614,8 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
         era5_anom = era5_anom.sel(lat=slice(-10, 10))
     elif region=='tropics':
         era5_anom = era5_anom.sel(lat=slice(-30, 30))
+    elif region=='NP':
+        era5_anom = era5_anom.sel(lat=slice(20, 90))
     # Initialize EOF solver
     solver = Eof(era5_anom)
     # Calculate the first EOF
@@ -633,7 +642,8 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
         pcs_df['PC' + str(n + 1)] = pcs.sel(mode=n).data
         if norm:
             pcs_df['PC' + str(n + 1)] /= np.std(pcs.sel(mode=n).data)
-    
+    # simpler time index for plotting
+    pcs_df['simp_time'] = pcs_df.year + ((pcs_df.month - 1) / 12)
     return solver, pcs_df
 
     
@@ -781,3 +791,216 @@ def plot_regression(arr1, arr2, xlabel='', ylabel='', title=''):
     plt.title(title)
     plt.legend()
     plt.show()  
+    
+# Formerly in all_cloud_corr.py
+def butter_lowpass(cutOff, fs, order=5):
+    nyq = 0.5 * fs
+    normalCutoff = cutOff / nyq
+    b, a = signal.butter(order, normalCutoff, btype='low', analog=False)  # Use analog=False for a digital filter
+    return b, a
+
+
+def butter_lowpass_filter(data, cutOff, fs, order=4):
+    b, a = butter_lowpass(cutOff, fs, order=order)
+    y = signal.filtfilt(b, a, data)  # Use filtfilt for zero-phase filtering
+    return y
+
+
+def red_AR1(f, autocorr, A):
+    """
+    Red noise spectrum for AR1 process from
+    https://en.wikipedia.org/wiki/Autoregressive_model#AR(1)
+    """
+    rs = A * (1.0 - autocorr**2) /(1. -(2.0 * autocorr * np.cos(f * 2.0 * np.pi))\
+                                   + autocorr**2)
+    return rs
+
+
+def red_brownian(f, A):
+    """
+    Red noise fit for Brownian motion
+    """
+    return A / (2 * np.pi * f**2)
+
+
+def red_OU(f, A):
+    """
+    red noise fit for Ornstein-Uhlenbeck process from:
+    https://arxiv.org/pdf/2212.03566
+    """
+    return 1 / (A**2 + (2 * np.pi * f)**2)
+
+
+def plot_psd(array, nperseg=256, sig=0.99, cutoff=1, 
+             period=1, nfft=512, name='SST', how='AR1'):
+    """
+    Plots the psd and red noise null hypothesis to check for significant peaks
+    under "cutoff"
+    
+    Returns relevant parameters to reconstruct the figure
+    
+    WE can now choose what red noise we want!
+    """    
+    f, Pxx = signal.welch(array , fs=1/period, nperseg=nperseg, nfft=nfft)
+    Pxx /= Pxx.mean()
+    # cut off the high frequency bs
+    Pxx = Pxx[f < cutoff]
+    f = f[f < cutoff]
+    # Get lag-1 autocorr to fit the red noise
+    corr = signal.correlate(array / np.std(array), array / np.std(array),
+                            mode='full')[array.shape[0]:] / len(array)
+    corr_1 = float(corr[1])
+    # Fit the red noise function
+    if how =='AR1':
+        red_params, red_covar = curve_fit(red_AR1, f, Pxx, p0=(corr_1, 1))
+        red_fitted = red_AR1(f, *red_params)
+    elif how == 'brownian':
+        red_params, red_covar = curve_fit(red_brownian, f, Pxx, p0=(1))
+        red_fitted = red_brownian(f, *red_params)
+    elif how =='OU':
+        red_params, red_covar = curve_fit(red_OU, f, Pxx, p0=(1))
+        red_fitted = red_OU(f, *red_params)
+    
+    # Calculate f-value
+    n_df = 2 * len(array) / nperseg
+    m_df = len(array) / 2
+    f_stat = stats.f.ppf(sig, n_df, m_df)
+    # Plot the PSD
+    # This way to extract the peak assumes only one sig peak but that is OK
+    # Reworkng this
+    plt.figure()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        num_peaks = len(f[Pxx > (f_stat * red_fitted)])
+        peaks = f[Pxx > (f_stat * red_fitted)]
+        
+    plt.semilogx(f, Pxx, label=f'{name}')
+    plt.vlines([(12*3)**-1, (12*7)**-1], min(Pxx), max(Pxx),
+                  label='ENSO Freqs', color='red', linestyle='dashed')
+    plt.semilogx(f, red_fitted, label='Fitted Red Noise')
+    plt.semilogx(f, f_stat * red_fitted, label=f'{sig} Significance')
+    plt.grid()
+    plt.ylabel('Power')
+    plt.xlabel('Frequency (Cycles / month)')
+    plt.legend()
+    plt.title(f'Power Spectrum of {name}')
+    
+    spectral_params = {'f': f,
+                       'Pxx': Pxx,
+                       'red_fit': red_fitted,
+                       'f_stat': f_stat,
+                       'peaks': peaks}
+    return spectral_params
+
+
+def plot_csd(arr1, arr2, nperseg=256, period=1, nfft=512, unit='months',
+             var1='', var2='', plot='log'):
+    """
+    Plots the cross spectral density of two variables; includes
+    the phase lag plot.
+    
+    Parameters:
+    - arr1, arr2: Input time series (numpy arrays)
+    - nperseg: Number of data points per segment for Welch's method
+    - period: Sampling period (e.g., 1 for yearly, etc.)
+    - nfft: Number of FFT points
+    - unit: Unit of the time lag (default: 'months')
+    """
+    arr1 = arr1.copy()
+    arr2 = arr2.copy()
+    # Remove mean and normalize by standard deviation
+    arr1 = (arr1 - np.mean(arr1)) / np.std(arr1)
+    arr2 = (arr2 - np.mean(arr2)) / np.std(arr2)
+    # Remove linear trend
+    arr1 = signal.detrend(arr1)
+    arr2 = signal.detrend(arr2)
+    # Compute the power spectral densities
+    f, Pxx = signal.welch(arr1, fs=1/period, nperseg=nperseg, nfft=nfft)
+    f, Pyy = signal.welch(arr2, fs=1/period, nperseg=nperseg, nfft=nfft)
+    # Compute the cross power spectral density
+    f, Pxy = signal.csd(arr1, arr2, fs=1/period, nperseg=nperseg, nfft=nfft)
+    # Compute magnitude (coherence-like measure)
+    mag = np.abs(Pxy) / np.sqrt(Pxx * Pyy)  # Fixed normalization
+    # Compute phase (in radians)
+    phase = np.angle(Pxy)  # Fixed phase calculation
+    # Compute time lag (handling f = 0 case to avoid division by zero)
+    lag = np.zeros_like(phase)
+    nonzero_f = f > 0  # Avoid division by zero at f=0
+    lag[nonzero_f] = phase[nonzero_f] / (2 * np.pi * f[nonzero_f])
+    # Plot results
+    fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    if var1 and var2:
+        fig.suptitle(f'{var1} vs {var2}')
+    plt.tight_layout()
+
+    if plot=='log':
+        axs[0].semilogx(f, mag, label="Magnitude")
+    else:
+        axs[0].plot(f, mag, label="Magnitude")
+    axs[0].set_ylabel('Magnitude')
+    axs[0].set_title('Cross Spectral Density')
+    axs[0].grid()
+    axs[0].vlines([(12*3)**-1, (12*7)**-1], min(mag), max(mag),
+                  label='ENSO Freqs', color='red', linestyle='dashed')
+    axs[0].legend()
+    
+    if plot=='log':
+        axs[1].semilogx(f, lag, label=f"Lag ({unit})")
+    else:
+        axs[1].plot(f, lag, label=f"Lag ({unit})")
+    axs[1].set_ylabel(f'Lag ({unit})')
+    axs[1].set_xlabel('Frequency')
+    axs[1].vlines([(12*3)**-1, (12*7)**-1], min(lag), max(lag),
+                  label='ENSO Freqs', color='red', linestyle='dashed')
+    axs[1].grid()
+    axs[1].legend()
+    
+    plt.show()
+    
+    
+def isolate_ep_era5(era5_data, var='lcc', ep_domain=ep_domain_360):
+    """
+    Isolates the EP region from larger era5 data for purposes of timeseries
+    analysis over averaged quantities
+    
+    Select single var or get whole set
+    """
+    era5_ep = era5_data.copy(deep=True)
+    lat_bounds = ep_domain[:2][::-1]
+    lon_bounds = ep_domain[2:]
+    era5_ep['lon'] = (era5_ep.lon + 360) % 360
+    if var:
+        era5_ep = era5_ep[var].sel(lat=slice(*lat_bounds), 
+                                   lon=slice(*lon_bounds))
+    else:
+        era5_ep = era5_ep.sel(lat=slice(*lat_bounds), 
+                                   lon=slice(*lon_bounds))
+    return era5_ep.mean(dim=['lat', 'lon'])
+
+
+def isolate_ep_isccp(isccp_anom, var, domain=ep_domain_360):
+    """
+    Returns mean of variable within isccp_anom in eastern pacific
+    """
+    data = isccp_anom.sel(lat=slice(*domain[:2]),
+                          lon=slice(*domain[2:]))
+    return data[var].mean(dim=['lat', 'lon'])
+
+
+def convert_longitude(lon, to_360=True):
+    """
+    Convert longitude between -180 to 180 and 0 to 360.
+
+    Parameters:
+        lon (float or array-like): Longitude value(s) to convert.
+        to_360 (bool): If True, convert from [-180, 180] to [0, 360].
+                       If False, convert from [0, 360] to [-180, 180].
+
+    Returns:
+        Converted longitude value(s).
+    """
+    if to_360:
+        return (lon + 360) % 360  # Convert -180 to 180 -> 0 to 360
+    else:
+        return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
+

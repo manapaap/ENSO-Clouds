@@ -189,9 +189,9 @@ def main():
             
         # Detrend all
         print('Detrending...')
-        era5_anom = era5_anom.map(lambda da: polyfit_detrend(da, 'time'))
-        ceres_anom = ceres_anom.map(lambda da: polyfit_detrend(da, 'time')) 
-        ebaf_anom = ebaf_anom.map(lambda da: polyfit_detrend(da, 'time')) 
+        era5_anom = era5_anom.map(lambda da: share.polyfit_detrend(da, 'time'))
+        ceres_anom = ceres_anom.map(lambda da: share.polyfit_detrend(da, 'time')) 
+        ebaf_anom = ebaf_anom.map(lambda da: share.polyfit_detrend(da, 'time')) 
         
         # Cloud radiative effect?
         ceres_anom['swcre_surf'] = ceres_anom['adj_atmos_sw_up_clr_surface_mon'] -\
@@ -237,6 +237,8 @@ def main():
     
     # Alert! Rotated EOFS!
     pc_enso = share.rotate_enso_eof(pc_enso)
+    # Alert! garbage sign conventions!
+    ebaf_anom[['toa_lw_all_mon', 'toa_sw_all_mon']] *= -1
     
     corr = share.calc_corr_vect(era5_anom, 'sst', pc_enso, 'E')
     share.plot_corr(corr, cbar_lab='R',

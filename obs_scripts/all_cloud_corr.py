@@ -17,8 +17,6 @@ import numpy as np
 import xarray as xr
 import os
 import scipy.signal as signal
-from scipy.optimize import curve_fit
-import scipy.stats as stats
 import warnings
 import pandas as pd
 
@@ -27,183 +25,6 @@ os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 # We need to do the same thing as with the CERES data where annual
 # composites are generated and used to construct El Nino/La Nina anomaly fields
 import obs_scripts.shared_funcs as share
-
-def convert_longitude(lon, to_360=True):
-    """
-    Convert longitude between -180 to 180 and 0 to 360.
-
-    Parameters:
-        lon (float or array-like): Longitude value(s) to convert.
-        to_360 (bool): If True, convert from [-180, 180] to [0, 360].
-                       If False, convert from [0, 360] to [-180, 180].
-
-    Returns:
-        Converted longitude value(s).
-    """
-    if to_360:
-        return (lon + 360) % 360  # Convert -180 to 180 -> 0 to 360
-    else:
-        return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
-
-
-def isolate_ep(era5_data, ep_domain=share.ep_domain_360, var='lcc'):
-    """
-    Isolates the EP region from larger era5 data for purposes of timeseries
-    analysis over averaged quantities
-    
-    Select single var or get whole set
-    """
-    era5_ep = era5_data.copy(deep=True)
-    lat_bounds = ep_domain[:2][::-1]
-    lon_bounds = ep_domain[2:]
-    
-    era5_ep['lon'] = (era5_ep.lon + 360) % 360
-    
-    if var:
-        era5_ep = era5_ep[var].sel(lat=slice(*lat_bounds), 
-                                   lon=slice(*lon_bounds))
-    else:
-        era5_ep = era5_ep.sel(lat=slice(*lat_bounds), 
-                                   lon=slice(*lon_bounds))
-    return era5_ep.mean(dim=['lat', 'lon'])
-
-
-def butter_lowpass(cutOff, fs, order=5):
-    nyq = 0.5 * fs
-    normalCutoff = cutOff / nyq
-    b, a = signal.butter(order, normalCutoff, btype='low', analog=False)  # Use analog=False for a digital filter
-    return b, a
-
-
-def butter_lowpass_filter(data, cutOff, fs, order=4):
-    b, a = butter_lowpass(cutOff, fs, order=order)
-    y = signal.filtfilt(b, a, data)  # Use filtfilt for zero-phase filtering
-    return y
-
-
-def red_power(f, autocorr, A):
-    """
-    Function for red noise spectrum. Will be fit to PSD. 
-    """ 
-    rs = A * (1.0 - autocorr**2) /(1. -(2.0 * autocorr * np.cos(f *2.0 * np.pi)) + autocorr**2)
-    return rs
-
-
-def plot_psd(array, nperseg=256, sig=0.99, cutoff=1, 
-             period=1, nfft=512, name='SST'):
-    """
-    Plots the psd and red noise null hypothesis to check for significant peaks
-    under "cutoff"
-    
-    Returns relevant parameters to reconstruct the figure
-    """    
-    f, Pxx = signal.welch(array , fs=1/period, nperseg=nperseg, nfft=nfft)
-    Pxx /= Pxx.mean()
-    # cut off the high frequency bs
-    Pxx = Pxx[f < cutoff]
-    f = f[f < cutoff]
-    # Get lag-1 autocorr to fit the red noise
-    corr = signal.correlate(array / np.std(array), array / np.std(array),
-                            mode='full')[array.shape[0]:] / len(array)
-    corr_1 = float(corr[1])
-    # Fit the red noise function
-    red_params, red_covar = curve_fit(red_power, f, Pxx, p0=(corr_1, 1))
-    red_fitted = red_power(f, *red_params)
-    # Calculate f-value
-    n_df = 2 * len(array) / nperseg
-    m_df = len(array) / 2
-    f_stat = stats.f.ppf(sig, n_df, m_df)
-    # Plot the PSD
-    # This way to extract the peak assumes only one sig peak but that is OK
-    # Reworkng this
-    plt.figure()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        num_peaks = len(f[Pxx > (f_stat * red_fitted)])
-        peaks = f[Pxx > (f_stat * red_fitted)]
-        
-    plt.semilogx(f, Pxx, label=f'{name}, Not Significant')
-    plt.vlines([(12*3)**-1, (12*7)**-1], min(Pxx), max(Pxx),
-                  label='ENSO Freqs', color='red', linestyle='dashed')
-    plt.plot(f, red_fitted, label='Fitted Red Noise')
-    plt.plot(f, f_stat * red_fitted, label=f'{sig} Significance')
-    plt.grid()
-    plt.ylabel('Power')
-    plt.xlabel('Frequency (Cycles / month)')
-    plt.legend()
-    plt.title(f'Power Spectrum of {name}')
-    
-    spectral_params = {'f': f,
-                       'Pxx': Pxx,
-                       'red_fit': red_fitted,
-                       'f_stat': f_stat,
-                       'peaks': peaks}
-    return spectral_params
-
-
-def plot_csd(arr1, arr2, nperseg=256, period=1, nfft=512, unit='months',
-             var1='', var2='', plot='log'):
-    """
-    Plots the cross spectral density of two variables; includes
-    the phase lag plot.
-    
-    Parameters:
-    - arr1, arr2: Input time series (numpy arrays)
-    - nperseg: Number of data points per segment for Welch's method
-    - period: Sampling period (e.g., 1 for yearly, etc.)
-    - nfft: Number of FFT points
-    - unit: Unit of the time lag (default: 'months')
-    """
-    arr1 = arr1.copy()
-    arr2 = arr2.copy()
-    # Remove mean and normalize by standard deviation
-    arr1 = (arr1 - np.mean(arr1)) / np.std(arr1)
-    arr2 = (arr2 - np.mean(arr2)) / np.std(arr2)
-    # Remove linear trend
-    arr1 = signal.detrend(arr1)
-    arr2 = signal.detrend(arr2)
-    # Compute the power spectral densities
-    f, Pxx = signal.welch(arr1, fs=1/period, nperseg=nperseg, nfft=nfft)
-    f, Pyy = signal.welch(arr2, fs=1/period, nperseg=nperseg, nfft=nfft)
-    # Compute the cross power spectral density
-    f, Pxy = signal.csd(arr1, arr2, fs=1/period, nperseg=nperseg, nfft=nfft)
-    # Compute magnitude (coherence-like measure)
-    mag = np.abs(Pxy) / np.sqrt(Pxx * Pyy)  # Fixed normalization
-    # Compute phase (in radians)
-    phase = np.angle(Pxy)  # Fixed phase calculation
-    # Compute time lag (handling f = 0 case to avoid division by zero)
-    lag = np.zeros_like(phase)
-    nonzero_f = f > 0  # Avoid division by zero at f=0
-    lag[nonzero_f] = phase[nonzero_f] / (2 * np.pi * f[nonzero_f])
-    # Plot results
-    fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-    if var1 and var2:
-        fig.suptitle(f'{var1} vs {var2}')
-    plt.tight_layout()
-
-    if plot=='log':
-        axs[0].semilogx(f, mag, label="Magnitude")
-    else:
-        axs[0].plot(f, mag, label="Magnitude")
-    axs[0].set_ylabel('Magnitude')
-    axs[0].set_title('Cross Spectral Density')
-    axs[0].grid()
-    axs[0].vlines([(12*3)**-1, (12*7)**-1], min(mag), max(mag),
-                  label='ENSO Freqs', color='red', linestyle='dashed')
-    axs[0].legend()
-    
-    if plot=='log':
-        axs[1].semilogx(f, lag, label=f"Lag ({unit})")
-    else:
-        axs[1].plot(f, lag, label=f"Lag ({unit})")
-    axs[1].set_ylabel(f'Lag ({unit})')
-    axs[1].set_xlabel('Frequency')
-    axs[1].vlines([(12*3)**-1, (12*7)**-1], min(lag), max(lag),
-                  label='ENSO Freqs', color='red', linestyle='dashed')
-    axs[1].grid()
-    axs[1].legend()
-    
-    plt.show()
 
 
 def calc_oni(era5_data):
@@ -374,37 +195,39 @@ def main():
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
     # pc_enso['PC1'] *= -1
+    pc_enso[['PC1', 'PC2']] *= -1
     pc_enso = share.rotate_enso_eof(pc_enso)
     
     # Correlations from before
-    corr = share.calc_corr_vect(era5_data, 'lcc', -pc_enso, 'C')
-    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
+    corr = share.calc_corr_vect(era5_data, 'lcc', pc_enso, 'C')
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, cz_corr=False,
               title='Correlation Between LCC and C Mode')
     
     _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
                                 region='tropics', detrend=True)
     # The plots look very similar to Nino 3.4 correlation, so we ignore this
     corr = share.calc_corr_vect(era5_data, 'theta_700', pc_700, 'PC1')
-    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, cz_corr=False,
               title='Correlation Between Θ₇₀₀ Anom and Θ₇₀₀ PC1')
     
     # Single variable trajectories
-    lcc_anom = isolate_ep(era5_data, share.ep_domain_360, 'lcc')
+    lcc_anom = share.isolate_ep_era5(era5_data, domain=share.ep_domain_360, 
+                                     var='lcc')
     theta_anom = era5_data['theta_700'].sel(lat=slice(30, -30)).mean(dim=['lat',
                                                                           'lon'])
 
     # Nino 3.4 index and ONI for our data
     nino_data = calc_oni(era5_data)
-    nino_data['simp_time'] = nino_data.year + ((nino_data.month - 1) / 12)
     # Noaa-style detrending for clouds; include other variables we want 
     # which makes analysis a little easier
+    nino_data[['PC1', 'C', 'E', 'simp_time', 'PC2']] = pc_enso[['PC1', 'C', 'E',
+                                                                'simp_time',
+                                                                'PC2']]
     nino_data['lcc_detr'] = 100 * polynomial_detrend(lcc_anom, nino_data['simp_time'],
                                                      6) 
-    nino_data['lcc_clean'] = butter_lowpass_filter(nino_data['lcc_detr'], 1/8, 
+    nino_data['lcc_clean'] = share.butter_lowpass_filter(nino_data['lcc_detr'], 1/8, 
                                                    1, 4)
-    nino_data[['PC1', 'C', 'E']] = pc_enso[['PC1', 'C', 'E']]
     # to make +ve eof = el nino
-    nino_data[['PC1', 'C', 'E']] *= -1
     nino_data['theta_anom'] = signal.detrend(theta_anom)
     nino_data['PC_theta'] = pc_700['PC1']
     ## assign enso state
