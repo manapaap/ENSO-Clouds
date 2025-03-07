@@ -65,6 +65,7 @@ def isccp_cloud_dict():
             1: 'cumulus', 4: 'cumulus', 2: 'stratus', 5: 'stratus',
             3: 'stratus', 6: 'stratus'}
     
+    # High cirrus clouds???    
     return ref, simp
 
 
@@ -418,7 +419,7 @@ def main():
     
     # Correlations?
     corr = share.calc_corr_vect(isccp_anom, 'stratus', pc_enso, 'C')
-    share.plot_corr(corr, cbar_lab='R', lims=[-50, 50], cz_corr=False,
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, 
               title='Correlation Between ISCCP Sc and C Mode')
     # Consistent! Let's see the low cloud anomaly
     lcc_anom = share.isolate_ep_isccp(isccp_anom, 'stratus')

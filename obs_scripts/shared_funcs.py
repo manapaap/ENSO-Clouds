@@ -459,7 +459,7 @@ def plot_scalar_field(data, title='',  lims=cz_domain_180, cbar_lab='LCC (Frac)'
     
     
 def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
-              shrink=0.65, mode='corr', contour=False, cz_corr=True):
+              shrink=0.65, mode='corr', contour=False):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     
@@ -527,10 +527,7 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     # Set plot limits if specified
     if lims is not None and len(lims) == 4:
         ax.set_ylim(lims[0], lims[1])
-        if cz_corr:
-            ax.set_xlim(lims[3] + 20, lims[2] - 20)
-        else:
-            ax.set_xlim(lims[3], lims[2])
+        ax.set_xlim(lims[3], lims[2])
     if lims is not None and len(lims) == 2:
         # Set to tropics still
         ax.set_ylim(lims[0], lims[1])
@@ -550,7 +547,7 @@ def domain_anom(era5_anom, var):
     return pd.DataFrame(df)
     
 
-def calc_eis(era5_eis, truncate=True):
+def calc_eis(era5_eis):
     """
     Calculates estimated inversion strength of dataarray and returns the same,
     per Wood, 2006 also returns theta_700 and LTS for the sake of it
@@ -559,9 +556,6 @@ def calc_eis(era5_eis, truncate=True):
     code. Still call their module for other things. Just wanted to ensure
     compatibity with xr objects
     """
-    if truncate:
-        # Remove last month since our single levels data doesn't have that
-        era5_eis = era5_eis[{'time':slice(0, len(era5_eis.time) - 1)}]
     t_700 = era5_eis.sel(pressure_level=700)['t']
     t_1000 = era5_eis.sel(pressure_level=1000)['t']
     # R/cp from wikipedia
@@ -591,15 +585,23 @@ def polyfit_detrend(dataarray, dim='time'):
 
 
 def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
-             detrend=False):
+             detrend=False, exclude_land=True, sst_data=None):
     """
     Calculates the first EOF of the SST anomalies across the Pacific.
     Prints explained variance as well.
     
     Also does a linear detrend if asked for
+    
+    uses sst mask to remove land values of variables defined over both
+    You can now provide sst as a mask separately, but it must be the same
+    shape 
     """    
     # Retains dataset object for now
     era5_anom = era5_anom[[var]].copy()
+    if exclude_land:
+        if sst_data is None:
+            sst_data = era5_anom['sst']
+        era5_anom[var] = era5_anom[var].where(sst_data.notnull())
     if detrend:
         era5_anom = era5_anom.map(lambda da: polyfit_detrend(da, 'time'))
     era5_anom = era5_anom[var]
@@ -823,16 +825,16 @@ def red_brownian(f, A):
     return A / (2 * np.pi * f**2)
 
 
-def red_OU(f, A):
+def red_OU(f, A, sigma):
     """
     red noise fit for Ornstein-Uhlenbeck process from:
     https://arxiv.org/pdf/2212.03566
     """
-    return 1 / (A**2 + (2 * np.pi * f)**2)
+    return sigma / (A**2 + (2 * np.pi * f)**2)
 
 
 def plot_psd(array, nperseg=256, sig=0.99, cutoff=1, 
-             period=1, nfft=512, name='SST', how='AR1'):
+             period=1, nfft=256, name='SST', how='AR1'):
     """
     Plots the psd and red noise null hypothesis to check for significant peaks
     under "cutoff"
@@ -858,7 +860,7 @@ def plot_psd(array, nperseg=256, sig=0.99, cutoff=1,
         red_params, red_covar = curve_fit(red_brownian, f, Pxx, p0=(1))
         red_fitted = red_brownian(f, *red_params)
     elif how =='OU':
-        red_params, red_covar = curve_fit(red_OU, f, Pxx, p0=(1))
+        red_params, red_covar = curve_fit(red_OU, f, Pxx, p0=(1, 1))
         red_fitted = red_OU(f, *red_params)
     
     # Calculate f-value
@@ -873,15 +875,18 @@ def plot_psd(array, nperseg=256, sig=0.99, cutoff=1,
         warnings.simplefilter("ignore", category=RuntimeWarning)
         num_peaks = len(f[Pxx > (f_stat * red_fitted)])
         peaks = f[Pxx > (f_stat * red_fitted)]
-        
-    plt.semilogx(f, Pxx, label=f'{name}')
-    plt.vlines([(12*3)**-1, (12*7)**-1], min(Pxx), max(Pxx),
+    
+    # Rescale to per-yera by multiply by 12
+    plt.semilogx(f * 12, Pxx, label=f'{name}')
+    plt.vlines([(3)**-1, (7)**-1], min(Pxx), max(f_stat * red_fitted),
                   label='ENSO Freqs', color='red', linestyle='dashed')
-    plt.semilogx(f, red_fitted, label='Fitted Red Noise')
-    plt.semilogx(f, f_stat * red_fitted, label=f'{sig} Significance')
+    plt.vlines((10)**-1, min(Pxx), max(f_stat * red_fitted),
+                  label='Decadal ENSO', color='darkred', linestyle='dashdot')
+    plt.semilogx(f * 12, red_fitted, label='Fitted Red Noise')
+    plt.semilogx(f * 12, f_stat * red_fitted, label=f'{sig} Significance')
     plt.grid()
     plt.ylabel('Power')
-    plt.xlabel('Frequency (Cycles / month)')
+    plt.xlabel('Frequency (Cycles / year)')
     plt.legend()
     plt.title(f'Power Spectrum of {name}')
     
@@ -958,7 +963,7 @@ def plot_csd(arr1, arr2, nperseg=256, period=1, nfft=512, unit='months',
     plt.show()
     
     
-def isolate_ep_era5(era5_data, var='lcc', ep_domain=ep_domain_360):
+def isolate_ep_era5(era5_data, var='lcc', domain=ep_domain_360):
     """
     Isolates the EP region from larger era5 data for purposes of timeseries
     analysis over averaged quantities
@@ -966,8 +971,8 @@ def isolate_ep_era5(era5_data, var='lcc', ep_domain=ep_domain_360):
     Select single var or get whole set
     """
     era5_ep = era5_data.copy(deep=True)
-    lat_bounds = ep_domain[:2][::-1]
-    lon_bounds = ep_domain[2:]
+    lat_bounds = domain[:2][::-1]
+    lon_bounds = domain[2:]
     era5_ep['lon'] = (era5_ep.lon + 360) % 360
     if var:
         era5_ep = era5_ep[var].sel(lat=slice(*lat_bounds), 

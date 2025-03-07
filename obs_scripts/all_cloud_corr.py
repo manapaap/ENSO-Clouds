@@ -144,53 +144,72 @@ def polynomial_detrend(data, time_axis, degree=3, plot=False):
     
 
 def main():    
-    global era5_data, pc_enso, lcc_anom, nino_data
+    global era5_data, pc_enso, lcc_anom, nino_data, era5_flux
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
+    file_flux = 'era5_all/timeseries/era5_flux_all.nc'
     
-    if os.path.exists(file_era5):
+    if os.path.exists(file_era5) and os.path.exists(file_flux):
         print('Files Exist. Loading in data.')
         era5_data = xr.open_dataset(file_era5)
+        era5_flux = xr.open_dataset(file_flux)
     else: 
         print("Files don't exist. Generating from raw data")
         # Avg contains mean rates, data contains the few things I really care for
-        # era5_sing_avg = xr.open_dataset('era5_all/raw/era5_sing_1.nc')
-        era5_data = xr.open_dataset('era5_all/raw/era5_sing_0.nc')
-        era5_pres = xr.open_dataset('era5_all/raw/era5_pres.nc')
+        # era5_data_avg = xr.open_dataset('era5_all/raw/era5_data_1.nc')
+        era5_data = xr.open_dataset('era5_all/raw/era5_sing_new_0.nc').drop_vars('number')
+        era5_flux = xr.open_dataset('era5_all/raw/era5_sing_new_1.nc')
+        era5_pres = xr.open_dataset('era5_all/raw/era5_pres_new.nc')
         # Clean up the data
-        # era5_sing_avg = era5_sing_avg.drop_vars('expver').rename({'valid_time':
+        # era5_data_avg = era5_data_avg.drop_vars('expver').rename({'valid_time':
         #                                                      'time'})
         era5_data = era5_data.drop_vars('expver').rename({'valid_time':
+                                                              'time'})
+        era5_flux = era5_flux.drop_vars('expver').rename({'valid_time':
                                                               'time'})
         era5_pres = era5_pres.drop_vars('expver').rename({'valid_time':
                                                               'time'})   
         # Add fields we care about from pressure levels
+        era5_data['eis'], era5_data['lts'], era5_data['theta_700'] = share.calc_eis(era5_pres)
         era5_data['t_500'] = era5_pres['t'].sel(pressure_level=500)
+        era5_data['w_700'] = era5_pres['w'].sel(pressure_level=700)
         era5_data['rh_700'] = era5_pres['r'].sel(pressure_level=700)
+        era5_data['q_700'] = era5_pres['q'].sel(pressure_level=700)
         era5_data['rh_1000'] = era5_pres['r'].sel(pressure_level=1000)
         era5_data['speed'] = np.hypot(era5_data['u10'], era5_data['v10'])
-        era5_data['eis'], era5_data['lts'], era5_data['theta_700'] = share.calc_eis(era5_pres,
-                                                                      truncate=False)
+        era5_data['pv_700'] = era5_pres['pv'].sel(pressure_level=700)
+        era5_data['pv_500'] = era5_pres['pv'].sel(pressure_level=500)
         
-        era5_data = share.crop_era5(era5_data, rename=True, domain=share.pac_domain)
+        era5_data = share.crop_era5(era5_data, rename=True, 
+                                    domain=share.pac_domain)
+        era5_flux = share.crop_era5(era5_flux, rename=True, 
+                                    domain=share.pac_domain)
         # Mean year
         climatology = era5_data.groupby('time.month').mean(dim='time')
-        years = np.unique(era5_data.time.dt.year)
+        clim_rate = era5_flux.groupby('time.month').mean(dim='time')
+        # deas
+        years = era5_data.time.dt.year
+        months = era5_data.time.dt.month
+        num = len(years)
         # Anomaly time series
-        for n, year in enumerate(years):
-            share.progress_bar(n, len(years), 'deseasonalizing ERA5...')
-            year_data = era5_data.sel(time=slice(f'{year}-01', f'{year}-12'))
-            time_axis = year_data.time
-            # Reassign time axis so it is consistent with the selected slice
-            climatology['time'] = time_axis.data
-            climatology = climatology.assign_coords(time=("month",
-                                                         climatology.time.data))
-            climatology = climatology.swap_dims({"month": "time"})
-            # Subtract climatology year by year       
-            era5_data[{"time":slice(12 * n, 12 * (n + 1))}] -= climatology   
-            
+        for n, (year, month) in enumerate(zip(years, months)):
+            share.progress_bar(n, num, f'Deseasonalizing ERA5...{int(year)}-{int(month)}')     
+            era5_data[{"time": n }] -= climatology.sel(month=month)
+        # deas
+        years = era5_flux.time.dt.year
+        months = era5_flux.time.dt.month
+        num = len(years)
+        # Anomaly time series
+        for n, (year, month) in enumerate(zip(years, months)):
+            share.progress_bar(n, num, f'Deseasonalizing ERA5 fluxess...{int(year)}-{int(month)}')     
+            era5_flux[{"time": n }] -= clim_rate.sel(month=month)
+        
+        # fix a date issue?
+        era5_flux['time'] = era5_data.time
         print('\nSaving to file...\n')
-        era5_data.to_netcdf(file_era5)   
+        era5_data.to_netcdf(file_era5)  
+        era5_flux.to_netcdf(file_flux)
     
+    era5_flux['time'] = era5_data.time
     _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
@@ -200,14 +219,14 @@ def main():
     
     # Correlations from before
     corr = share.calc_corr_vect(era5_data, 'lcc', pc_enso, 'C')
-    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, cz_corr=False,
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
               title='Correlation Between LCC and C Mode')
     
     _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
                                 region='tropics', detrend=True)
     # The plots look very similar to Nino 3.4 correlation, so we ignore this
     corr = share.calc_corr_vect(era5_data, 'theta_700', pc_700, 'PC1')
-    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, cz_corr=False,
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
               title='Correlation Between Θ₇₀₀ Anom and Θ₇₀₀ PC1')
     
     # Single variable trajectories
