@@ -156,30 +156,6 @@ def rad_type(ceres, oni_idx, year, anom_rad):
     axs[1].set_title('Surface')
     axs[1].set_xlabel('Time')
     # axs[1].set_ylabel('Radiation Flux (W/m2)')
-    
-
-def ep_cp_ensos(pc_enso):
-    """
-    Uses the E and C indices to define E vs C dominant nature
-    of ENSO events
-    
-    Uses E state in November and C state in February,
-    the typical peak of each
-    
-    Returns a df containing year, enso state, fe and fc, calculated as
-    fe = E / (E + C) and complementary
-    """
-    # Offsets to ensure we are comparing the right years
-    e_class = pc_enso.query('month==11')[:-1].reset_index()
-    c_class = pc_enso.query('month==2')[1:].reset_index()
-    
-    fe = e_class['E'] / (np.abs(c_class['C']) + np.abs(e_class['E']))
-    fc = c_class['C'] / (np.abs(c_class['C']) + np.abs(e_class['E']))
-    
-    pattern = pd.DataFrame({'year': e_class.year,
-                            'fe': fe, 'fc': fc})
-    
-    return pattern
 
 
 def ep_cp_ensos_dec(pc_enso):

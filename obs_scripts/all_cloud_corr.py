@@ -209,7 +209,7 @@ def main():
         era5_data.to_netcdf(file_era5)  
         era5_flux.to_netcdf(file_flux)
     
-    era5_flux['time'] = era5_data.time
+    era5_flux['time'] = era5_data.drop_vars('number').time
     _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
@@ -218,9 +218,9 @@ def main():
     pc_enso = share.rotate_enso_eof(pc_enso)
     
     # Correlations from before
-    corr = share.calc_corr_vect(era5_data, 'lcc', pc_enso, 'C')
+    corr = share.calc_corr_vect(era5_data, 'eis', pc_enso, 'PC2')
     share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
-              title='Correlation Between LCC and C Mode')
+              title='Correlation Between EIS and PC22 Mode')
     
     _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
                                 region='tropics', detrend=True)

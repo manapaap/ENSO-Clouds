@@ -431,6 +431,8 @@ def main():
     share.plot_combined(pc_enso['PC2'], lcc_eq_anom, isccp_anom.time, 
                         'PC2', 'Isccp SC')
     
+    # Write EOF to file for later
+    pc_enso.to_csv('misc_data/enso_pcs_isccp.csv', index=False)
     
 if __name__ == "__main__":
     main()

@@ -97,13 +97,12 @@ def main():
         era5_data = xr.open_dataset(file_era5)
     else:
         print('Files missing; please run vis_clouds and all_cloud_corr')
-    
     # Overlap period with ISCCP
     era5_isc = era5_data = era5_data.sel({'time': isccp_anom.time})
     # regions of intrest; too much to include in shared funcs for now
     regions = {'NEQP': [0, 10, 240, 280],
                'SEQP': [-10, 0, 240, 280],
-               'SEP': [-20, -10, 240, 290],
+               'SEP': [-20, -10, 260, 290],
                'ALL': [-20, 10, 240, 280]}
     # PCs for different time periods; get sign convention we want
     _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
@@ -144,15 +143,7 @@ def main():
                                                rh_1000_anoms],
                          names=['SST', 'Theta 700', '10m Speed', 'RH 700',
                                 'RH 1000'])
-    
     # EIS not good in SEP???
-    
 if __name__ == '__main__':
     main()
-    
-    
-    
-    
-    
-    
     

@@ -23,6 +23,8 @@ from scipy.optimize import curve_fit
 import scipy.stats as stats
 import scipy.signal as signal
 import warnings
+from matplotlib.colors import TwoSlopeNorm
+
 
 # Domains
 cz_domain_360 = [-30, 30, 120, -80 + 360]
@@ -259,7 +261,6 @@ def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.99, mode='corr'):
 def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     """
     Calculates the correlation between a field and a vector (e.g., Nino 3.4).
-    
     if slope, var1 = slope * var2
     """
     # Convert the vector data to a time-indexed DataArray
@@ -404,67 +405,67 @@ def plot_scalar_simple(data, var, date="2022-12", title='',
     plt.show()
     
     
-def plot_scalar_field(data, title='',  lims=cz_domain_180, cbar_lab='LCC (Frac)'):
+def plot_scalar_field(data, title='', lims=None, cbar_lab='',
+                      source='isccp', levels=4):
     """
-    Contour plot of a scalar field by proviing the data directly
+    Contour plot of a scalar field by providing the data directly.
     """
-    era5 = data
-    # Define central longitude to correctly handle global data
+    era5 = data.fillna(0)
     proj = ccrs.PlateCarree(central_longitude=180)
-    
+
     # Ensure longitude wraps correctly if in 0-360 range
     if era5.lon.max() > 180:
         era5 = era5.assign_coords(lon=(((era5.lon + 180) % 360) - 180))
         era5 = era5.sortby('lon')
-    
-    # Extract data for plotting
-    data = era5
+
     lon = era5.lon.values
     lat = era5.lat.values
-    
-    # Determine the color limits to center around zero
-    max_abs = max(abs(data.min().item()), abs(data.max().item()))
-    
-    # Print diagnostics to confirm data ranges
-    # print(f"Data variable - min: {data.min().item():.3f}, max: {data.max().item():.3f}")
-    # print(f"Longitude range: {lon.min()} to {lon.max()}")
-    # print(f"Latitude range: {lat.min()} to {lat.max()}")
-
-    # Create meshgrid if needed
     lon2d, lat2d = np.meshgrid(lon, lat)
-    
-    # Create plot
-    # plt.figure()
+
+    # Improved color normalization
+    vmin, vmax = np.percentile(era5.values, [0.5, 99.5])  # Robust scaling
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)  
+
     fig, ax = plt.subplots(subplot_kw={'projection': proj}, figsize=(10, 5))
     ax.set_global()
     ax.set_title(title)
-    
-    # Use pcolormesh for a continuous plot
-    pcm = ax.pcolormesh(lon2d, lat2d, data, transform=ccrs.PlateCarree(), 
-                        shading='auto', cmap='RdBu_r', vmin=-max_abs, 
-                        vmax=max_abs)
-    
-    # Add coastlines and gridlines
+
+    # pcolormesh plot
+    pcm = ax.pcolormesh(lon2d, lat2d, era5, transform=ccrs.PlateCarree(), 
+                        shading='nearest', cmap='RdBu_r', norm=norm)
+
+    # Contour overlay
+    levels = np.linspace(vmin, vmax, levels)  # Define contour levels
+    #contour = ax.contour(lon2d, lat2d, era5, levels=levels, 
+    #                     colors='black', linewidths=0.8, 
+    #                     transform=ccrs.PlateCarree())
+    lon1d = np.asarray(lon2d).reshape(-1)
+    lat1d = np.asarray(lat2d).reshape(-1)
+    era1d = np.asarray(era5).reshape(-1)
+    contour = ax.tricontour(lon1d, lat1d, era1d, levels=levels, 
+                        colors='black', linewidths=0.8, 
+                      transform=ccrs.PlateCarree())
+    ax.clabel(contour, inline=True, fontsize=8)
+
     ax.coastlines()
     ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
-    
-    cbar = plt.colorbar(pcm, ax=ax, orientation='vertical', pad=0.05,
-                        shrink=0.65)
+
+    cbar = plt.colorbar(pcm, ax=ax, orientation='vertical', pad=0.05, shrink=0.65)
     cbar.set_label(cbar_lab)
-    
     if lims is not None:
         ax.set_ylim(lims[0], lims[1])
-        ax.set_xlim(lims[3], lims[2])
+        ax.set_xlim(lims[3], lims[2])            
     plt.show()
     
     
 def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
-              shrink=0.65, mode='corr', contour=False):
+              shrink=0.65, levels=5):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     
     Slope_val determines percentile bounds for slope plot
     """
+    corr_field = corr_field.fillna(0)
     # corr_field = corr_field.copy(deep=True)
     # Define central longitude to correctly handle global data
     proj = ccrs.PlateCarree(central_longitude=180)
@@ -487,33 +488,28 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     lon2d, lat2d = np.meshgrid(lon, lat)
     
     # Determine the color limits to center around zero
-    max_abs = max(abs(corr_field.min().item()), abs(corr_field.max().item()))
-    if mode != 'corr':
-        quantile = mode.strip('slope_')
-        if len(quantile) > 0:
-            quantile = float(quantile)
-        else:
-            quantile = 0.1
-        nonan = corr_field.data[~np.isnan(corr_field.data)]
-        min_quant, max_quant = np.quantile(nonan, quantile), np.quantile(nonan, 1 - quantile)
-        max_abs = max(min_quant, max_quant)
+    vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
 
     # Create plot
     fig, ax = plt.subplots(subplot_kw={'projection': proj}, figsize=(10, 5))
     ax.set_global()
     ax.set_title(title)
     masked_data = np.ma.masked_invalid(corr_field.data)
-    
     # Use pcolormesh with centered color limits around zero
     pcm = ax.pcolormesh(lon2d, lat2d, corr_field.data, transform=ccrs.PlateCarree(),
-                        shading='auto', cmap='RdBu_r', vmin=-max_abs, vmax=max_abs)
+                        shading='auto', cmap='RdBu_r', norm=norm)
     pcm2 = ax.pcolormesh(lon2d, lat2d, nonsig.data, transform=ccrs.PlateCarree(),
                         shading='auto', cmap='Greys', alpha=0.1)
-    
-    if contour:
-        contour = ax.contour(lon2d, lat2d, masked_data, levels=np.linspace(-max_abs, max_abs, 8),
-                         transform=ccrs.PlateCarree(), colors='black', linewidths=0.7)
-        ax.clabel(contour, inline=True, fontsize=8, fmt="%.2f", inline_spacing=5)
+
+    levels = np.linspace(vmin, vmax, levels)
+    lon1d = np.asarray(lon2d).reshape(-1)
+    lat1d = np.asarray(lat2d).reshape(-1)
+    corr1d = np.asarray(corr_field).reshape(-1)
+    contour = ax.tricontour(lon1d, lat1d, corr1d, levels=levels, 
+                        colors='black', linewidths=0.8, 
+                      transform=ccrs.PlateCarree())
+    ax.clabel(contour, inline=True, fontsize=8, fmt="%.2f", inline_spacing=5)
     
     # Add coastlines and gridlines
     ax.coastlines()
@@ -596,11 +592,11 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
     You can now provide sst as a mask separately, but it must be the same
     shape 
     """    
+    if sst_data is None:
+        sst_data = era5_anom['sst']
     # Retains dataset object for now
     era5_anom = era5_anom[[var]].copy()
     if exclude_land:
-        if sst_data is None:
-            sst_data = era5_anom['sst']
         era5_anom[var] = era5_anom[var].where(sst_data.notnull())
     if detrend:
         era5_anom = era5_anom.map(lambda da: polyfit_detrend(da, 'time'))
@@ -793,7 +789,25 @@ def plot_regression(arr1, arr2, xlabel='', ylabel='', title=''):
     plt.title(title)
     plt.legend()
     plt.show()  
+
+
+def ep_cp_ensos(pc_enso):
+    """
+    Uses the E and C indices to define E vs C dominant nature
+    of ENSO events
+    Returns a df containing year, enso state, fe and fc, calculated as
+    fe = E / (E + C) and complementary
+    """
+    fe = pc_enso['E'] / (np.abs(pc_enso['C']) + np.abs(pc_enso['E']))
+    fc = pc_enso['C'] / (np.abs(pc_enso['C']) + np.abs(pc_enso['E']))
     
+    pattern = pd.DataFrame({'year': pc_enso.year,
+                            'month': pc_enso.month,
+                            'fe': fe, 'fc': fc})
+    
+    return pattern
+
+
 # Formerly in all_cloud_corr.py
 def butter_lowpass(cutOff, fs, order=5):
     nyq = 0.5 * fs
@@ -802,8 +816,8 @@ def butter_lowpass(cutOff, fs, order=5):
     return b, a
 
 
-def butter_lowpass_filter(data, cutOff, fs, order=4):
-    b, a = butter_lowpass(cutOff, fs, order=order)
+def butter_lowpass_filter(data, cutoff, fs, order=4):
+    b, a = butter_lowpass(cutoff, fs, order=order)
     y = signal.filtfilt(b, a, data)  # Use filtfilt for zero-phase filtering
     return y
 

@@ -66,7 +66,7 @@ def transform_coord(xr_ds, mode='360 Start'):
  
 def main():
     # Contains nino 3.4 anomaly
-    nino_idx = share.load_nino_idx('misc_data/nino_all.csv')
+    nino_idx = share.load_nino_idx('misc_data/nino_all_new.csv')
     nino_idx['3.4_anom'] = detrend(nino_idx['3.4_anom'])
     # Create a lagged index by arbitrary number of months
     nino_idx['3.4_anom_lag'] = nino_idx['3.4_anom'].shift(2)
@@ -198,11 +198,12 @@ def main():
 
     share.plot_scalar_field(climatology[cloud_class].sel(month=12) - climatology[cloud_class].mean(dim='month'),
                        title=f'ERA5 December Anomalous {cloud_class.upper()}',
+                       lims = share.pac_domain,
                        cbar_lab='frac')
         
     # isolate relevant period for analysis
-    era5_anom = era5_anom.sel({'time': ceres_anom.time})
     era5_flux['time'] = era5_anom.time
+    era5_anom = era5_anom.sel({'time': ceres_anom.time})
     # I don't know why the fluxes needed this hack but it wasnt working with the
     # above line
     era5_flux = era5_flux.sel({'time': ceres_anom.time})
@@ -213,7 +214,7 @@ def main():
                                  region='tropics')
     # The plots look very similar to Nino 3.4 correlation, so we ignore this
     corr = share.calc_corr_vect(era5_anom, 'theta_700', pc_700, 'PC1')
-    share.plot_corr(corr, cbar_lab='R',
+    share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
               title='Correlation Between Θ₇₀₀ Anom and Θ₇₀₀ PC1 (24.65% Variance)')
     
     # Let's correlate the ENSO PC to the Theta_700 pc
