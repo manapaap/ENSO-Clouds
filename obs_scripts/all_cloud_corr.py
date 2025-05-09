@@ -141,8 +141,38 @@ def polynomial_detrend(data, time_axis, degree=3, plot=False):
         axs[1].grid()
     
     return detr
-    
 
+
+def cold_adv(era5_data):
+    """
+    Calculates cold air advection using u10/v10 and SST gradients
+    
+    Shouold be accurate for monthly averaging purposes. 
+    """
+    R_earth = 6.371e6
+    deg_to_rad = np.pi / 180.0
+    # Compute lat/lon in radians
+    lat = era5_data.latitude * deg_to_rad
+    lon = era5_data.longitude * deg_to_rad
+    # Midpoint differences for centered derivatives
+    dlat = lat.diff('latitude')
+    dlon = lon.diff('longitude')
+    # Grid spacing (at midpoints)
+    dy = R_earth * dlat  # [m]
+    dx = R_earth * np.cos(lat) * dlon  # [m] (no need for lat_mid; use original lat)
+    # Compute gradients at CENTER points (using midpoints)
+    dsst_dy = era5_data['sst'].differentiate('latitude') / dy
+    dsst_dx = era5_data['sst'].differentiate('longitude') / dx
+    # Interpolate u10/v10 to SST gradient grid (midpoints)
+    u_mid = era5_data['u10'].interp(latitude=dsst_dy.latitude, 
+                                    longitude=dsst_dx.longitude)
+    v_mid = era5_data['v10'].interp(latitude=dsst_dy.latitude, 
+                                    longitude=dsst_dx.longitude)
+    # Compute advection
+    cold_adv = -(u_mid * dsst_dx + v_mid * dsst_dy)
+    return cold_adv
+    
+    
 def main():    
     global era5_data, pc_enso, lcc_anom, nino_data, era5_flux
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
@@ -178,6 +208,7 @@ def main():
         era5_data['speed'] = np.hypot(era5_data['u10'], era5_data['v10'])
         era5_data['pv_700'] = era5_pres['pv'].sel(pressure_level=700)
         era5_data['pv_500'] = era5_pres['pv'].sel(pressure_level=500)
+        era5_data['cold_adv'] = cold_adv(era5_data)
         
         era5_data = share.crop_era5(era5_data, rename=True, 
                                     domain=share.pac_domain)
@@ -209,7 +240,7 @@ def main():
         era5_data.to_netcdf(file_era5)  
         era5_flux.to_netcdf(file_flux)
     
-    era5_flux['time'] = era5_data.drop_vars('number').time
+    # era5_flux['time'] = era5_data.drop_vars('number').time
     _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
@@ -220,7 +251,7 @@ def main():
     # Correlations from before
     corr = share.calc_corr_vect(era5_data, 'eis', pc_enso, 'PC2')
     share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain,
-              title='Correlation Between EIS and PC22 Mode')
+              title='Correlation Between EIS and PC2 Mode')
     
     _, pc_700 = share.calc_eof(era5_data, var='theta_700', n_pc=1, plot=False,
                                 region='tropics', detrend=True)

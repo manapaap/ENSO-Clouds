@@ -49,7 +49,7 @@ def load_nino_idx(fpath):
         https://psl.noaa.gov/data/correlation/nina34.anom.data
         https://psl.noaa.gov/data/timeseries/monthly/NINO34/
     """
-    data = pd.read_csv('misc_data/nino_all.csv', header=0,
+    data = pd.read_csv(fpath, header=0,
                        names=['year', 'month', '1_2', '1_2_anom', '3',
                               '3_anom', '4', '4_anom', '3.4', '3.4_anom'])
     
@@ -1023,3 +1023,48 @@ def convert_longitude(lon, to_360=True):
     else:
         return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
 
+
+def plot_pcs(pc_enso):
+    """
+    Plots PC1 vs. PC2 scatter, along with axes for C and E. Tries to fit a 
+    polynomial curve to the data as per
+    https://www.nature.com/articles/s41586-018-0776-9
+    
+    Using only Nov-Jan months
+    """
+    enso_peak = pc_enso.query('month <= 1 or month >= 11')
+    
+    fit = np.polyfit(enso_peak['PC1'], enso_peak['PC2'], 2)
+    
+    x = np.linspace(enso_peak['PC1'].min(), enso_peak['PC1'].max(),
+                    num=len(enso_peak['PC1']))
+    x2 = np.linspace(pc_enso['PC1'].min(), pc_enso['PC1'].max(),
+                    num=len(pc_enso['PC1']))
+    poly = np.polyval(fit, x)
+    
+    plt.figure(figsize=(5, 5))
+    plt.scatter(pc_enso['PC1'], pc_enso['PC2'], alpha=0.5, color='grey',
+                label='All Year', zorder=15, s=1)
+    plt.scatter(enso_peak['PC1'], enso_peak['PC2'], color='black',
+                label='NDJ', zorder=20, s=1.2, alpha=0.8)
+    plt.plot(x2, x2, color='darkred', linewidth=0.5, 
+             label='C')
+    plt.plot(x2, -x2, color='darkblue', linewidth=0.5,
+             label='E')
+    plt.plot(x, poly, label='Poly Fit', zorder=17)
+    plt.grid()
+    plt.legend()
+    plt.xlabel('PC1')
+    plt.ylabel('PC2')
+    plt.show()
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    

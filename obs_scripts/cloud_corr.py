@@ -244,7 +244,7 @@ def main():
               title='Correlation Between LCC and E Mode')
     # These very neatly explain the spatial pattern of cloud cover changes
     
-    overlap_nino = nino_idx.query('"2000-03" <= time <= "2024-08"')
+    overlap_nino = nino_idx.query('"2000-03" <= time <= "2024-07"')
     share.plot_combined(overlap_nino['3.4_anom'], pc_enso['PC1'],
                   era5_anom.time, '3.4 Anom', 'PC1',
                   'Months', '', sig=0.99)

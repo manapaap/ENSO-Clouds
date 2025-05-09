@@ -71,10 +71,8 @@ def plot_thermocline_map(data, domain=cz_domain, title=''):
     con = ax.contourf(data.lon, data.lat, data.T,
                 extent=[min_lon, max_lon, min_lat, max_lat], 
              origin='lower', transform=ccrs.PlateCarree(), cmap='viridis')
-    
     # Set the extent based on domain or data coordinates
     ax.set_extent([min_lon, max_lon, min_lat, max_lat], crs=ccrs.PlateCarree())
-    
     # Optional: Add coastlines, gridlines, etc.
     ax.coastlines()
     ax.gridlines(draw_labels=True)

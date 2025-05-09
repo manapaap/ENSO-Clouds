@@ -84,7 +84,7 @@ def isolate_events(xr_ds, ep_cp, state='El Nino', loc='Central'):
     return clim
 
 
-def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None):
+def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None, levels=4):
     """
     Loops over the composite dictionaries to create four plots for 
     our variable in cp/ep/mixed/nina conditions
@@ -93,14 +93,16 @@ def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None):
         name = var
     n_cp = len(ep_cp.query('state == "El Nino"').query('loc == "Central"'))
     n_ep = len(ep_cp.query('state == "El Nino"').query('loc == "Eastern"'))
+    n_mix = len(ep_cp.query('state == "El Nino"').query('loc == "Mixed"'))
     n_nina = len(ep_cp.query('state == "La Nina"'))
     # Match the keys to dict
     names = {'ep_nino': f'{name} during Eastern Pacific El Nino, N = {int(n_ep / 4)}',
              'cp_nino': f'{name} during Central Pacific El Nino, N = {int(n_cp / 4)}',
+             'mix_nino': f'{name} during Mixed El Nino, N = {int(n_mix / 4)}',
              'nina': f'{name} during La Nina, N = {int(n_nina / 4)}'}
     
     for key, value in comp_dict.items():
-        share.plot_scalar_field(value[var], title=names[key],
+        share.plot_scalar_field(value[var], title=names[key], levels=levels,
                                 lims=share.pac_domain, cbar_lab=cbar_lab)
 
 
@@ -116,13 +118,13 @@ def main():
     ep_cp['C_E_ratio'] = np.abs(ep_cp['C'] / ep_cp['E'])
     ep_cp = ep_cp.query('month >= 11 or month <= 2')
     # Assign state
-    ep_cp['state'] = 'Neutral'
-    ep_cp['state'][ep_cp.oni >= 0.5] = 'El Nino'
-    ep_cp['state'][ep_cp.oni <= -0.5] = 'La Nina'
+    ep_cp.loc['state'] = 'Neutral'
+    ep_cp.loc['state'][ep_cp.oni >= 0.5] = 'El Nino'
+    ep_cp.loc['state'][ep_cp.oni <= -0.5] = 'La Nina'
     # Group by spatial expression
-    ep_cp['loc'] = 'Eastern'
-    ep_cp['loc'][ep_cp.C_E_ratio >= 0.9] = 'Mixed'
-    ep_cp['loc'][ep_cp.C_E_ratio >= 1.4] = 'Central'
+    ep_cp.loc['loc'] = 'Eastern'
+    ep_cp.loc['loc'][ep_cp.C_E_ratio >= 0.9] = 'Mixed'
+    ep_cp.loc['loc'][ep_cp.C_E_ratio >= 1.4] = 'Central'
 
     # I want to tidy this and ensure the categories are consistent per event
     # Step 1: Define event groups Proceed with assuming we have 4 month groups
@@ -176,13 +178,13 @@ def main():
     ep_cp_2['C_E_ratio'] = np.abs(ep_cp_2['C'] / ep_cp_2['E'])
     ep_cp_2 = ep_cp_2.query('month >= 11 or month <= 2')
     # Assign state
-    ep_cp_2['state'] = 'Neutral'
-    ep_cp_2['state'][ep_cp_2.oni >= 0.5] = 'El Nino'
-    ep_cp_2['state'][ep_cp_2.oni <= -0.5] = 'La Nina'
+    ep_cp_2.loc['state'] = 'Neutral'
+    ep_cp_2.loc['state'][ep_cp_2.oni >= 0.5] = 'El Nino'
+    ep_cp_2.loc['state'][ep_cp_2.oni <= -0.5] = 'La Nina'
     # Group by spatial expression
-    ep_cp_2['loc'] = 'Eastern'
-    ep_cp_2['loc'][ep_cp_2.C_E_ratio >= 0.9] = 'Mixed'
-    ep_cp_2['loc'][ep_cp_2.C_E_ratio >= 1.4] = 'Central'
+    ep_cp_2.loc['loc'] = 'Eastern'
+    ep_cp_2.loc['loc'][ep_cp_2.C_E_ratio >= 0.9] = 'Mixed'
+    ep_cp_2.loc['loc'][ep_cp_2.C_E_ratio >= 1.4] = 'Central'
     # Tidy
     breaks = ep_cp_2['year'].diff()
     # align with the actual year cutoffs
@@ -204,6 +206,8 @@ def main():
                                   state='El Nino', loc='Eastern')
     ebaf_states['cp_nino'] = isolate_events(ebaf_anom, ep_cp_2, 
                                   state='El Nino', loc='Central')
+    ebaf_states['mix_nino'] = isolate_events(ebaf_anom, ep_cp_2, 
+                                  state='El Nino', loc='Mixed')
     ebaf_states['nina'] = isolate_events(ebaf_anom, ep_cp_2, 
                                          state='La Nina', loc='all')
     

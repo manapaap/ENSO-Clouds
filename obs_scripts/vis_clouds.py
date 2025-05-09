@@ -17,7 +17,7 @@ from matplotlib.colors import TwoSlopeNorm
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import obs_scripts.shared_funcs as share
-
+# plt.rcParams['figure.dpi'] = 600
     
 def load_cloud_file(fpath, domain=share.cz_domain_360):
     """
@@ -61,7 +61,7 @@ def isccp_cloud_dict():
     # Simplified
     simp = {13: 'high', 16: 'high', 14: 'high', 17: 'high',
             15: 'deep', 18: 'deep', 7: 'mid', 10: 'mid', 
-            8: 'mid', 11: 'mid', 9: 'mid', 12: 'mid',
+            8: 'mid', 11: 'mid', 9: 'stratus', 12: 'stratus',
             1: 'cumulus', 4: 'cumulus', 2: 'stratus', 5: 'stratus',
             3: 'stratus', 6: 'stratus'}
     
@@ -384,9 +384,10 @@ def main():
     global isccp_anom, era5_data, pc_enso
     oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
     oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
+    
+    nino_idx = share.load_nino_idx('misc_data/nino_all_new.csv')
     # plot_enso(nino_idx.query('year >= 2000'), idx='Nino 3.4')
-    oni_idx = share.load_oni_idx('misc_data/oni_index.txt')
-    share.plot_enso(oni_idx.query('year >= 1983'), 'anom', 0.5, idx='ONI ')
+    share.plot_enso(oni_idx.query('year >= 1983'), 'anom', 0.5, idx='Oceanic Nino ')
     _, cloud_dict = isccp_cloud_dict()
     
     isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'
@@ -397,8 +398,10 @@ def main():
         # cloud types. Composites are also less useful than real data
         isccp = create_xarray('ISCCP_clouds/', 
                               to='era5_reanal/timeseries/isccp_comb.nc')
+        isccp = cloud_types(isccp, cloud_dict)
+        # Cloud overlap adjustment
+        isccp['sc_adj'] = isccp['stratus'] / (100 - isccp['high'])
         isccp_anom = deseasonalize_isccp(isccp)
-        isccp_anom = cloud_types(isccp_anom, cloud_dict)
         isccp_anom.to_netcdf('era5_reanal/timeseries/isccp_anom.nc')
     
     # Let's now calculate our C/E indives to compare to the ISCCP variables
