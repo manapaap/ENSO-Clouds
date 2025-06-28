@@ -381,7 +381,7 @@ def cloud_types(isccp_anom, cloud_dict):
 
 
 def main():
-    global isccp_anom, era5_data, pc_enso
+    global isccp_anom, era5_data, pc_enso, nino_idx
     oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
     oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
     
@@ -437,6 +437,18 @@ def main():
     # Write EOF to file for later
     pc_enso.to_csv('misc_data/enso_pcs_isccp.csv', index=False)
     
+    if False:
+        # sample call for big subplot
+        data = [isccp_anom, isccp_anom, isccp_anom, era5_data]
+        to_corr = [pc_enso, pc_enso, nino_idx]
+        vars1 = ['stratus', 'high', 'cldamt', 'sst']
+        vars2 = ['E', 'C', '3.4_anom']
+        types = ['E Index', 'C Index', 'Niño 3.4']
+        titles = ['ISCCP Sc + St', 'ISCCP Cirrus', 
+                  'ISCCP Total Cloud' , 'ERA5 SST']
+        
+        share.plot_corr_subplot(data, to_corr, vars1, vars2, titles, types)
+        
 if __name__ == "__main__":
     main()
     

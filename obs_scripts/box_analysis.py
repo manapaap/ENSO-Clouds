@@ -76,6 +76,7 @@ def pred_var(data_df, pred_dfs=[], names=[], normalize=False):
         X = pd.DataFrame({name: df[loc] for name, df in zip(names, pred_dfs)})
         if normalize:
             X /= X.std()  # Normalize predictors
+            Y /= Y.std() # Normalize cloud cover
         X = sm.add_constant(X)  # Add intercept term
         fit = sm.OLS(Y, X).fit()
         pvalues = fit.pvalues  # Get p-values
@@ -129,11 +130,6 @@ def main():
         print('Files missing; please run vis_clouds and all_cloud_corr')
     # Overlap period with ISCCP
     era5_isc = era5_data.sel({'time': isccp_anom.time})
-    # regions of intrest; too much to include in shared funcs for now
-    regions = {'NEQP': [0, 10, 240, 280],
-               'SEQP': [-10, 0, 240, 280],
-               'LSEP': [-20, -10, 240, 280],
-               'ALL': [-30, 10, 240, 280]}
     # PCs for different time periods; get sign convention we want
     _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
                              plot=False, region='equator', detrend=True)
@@ -143,28 +139,41 @@ def main():
                              plot=False, region='equator', detrend=True)
     pc_1983['PC1'] *= -1
     pc_1983 = share.rotate_enso_eof(pc_1983)
+    # regions of intrest; too much to include in shared funcs for now
+    regions = {'NEQP': [0, 10, 240, 280],
+               'SEQP': [-10, 0, 240, 280],
+               'LSEP': [-20, -10, 240, 280],
+               'ALL': [-20, 10, 240, 280],
+               'SEP': [-20, 0, 240, 280]}
+    
     # Get anomalies we care about
+    lp = True
     lcc_anoms = isolate_regions(isccp_anom, 'sc_adj', regions, 'ISCCP',
-                                lowpass=True)
-    eis_anoms = isolate_regions(era5_isc, 'eis', regions, 'ERA5')
+                                lowpass=lp)
+    eis_anoms = isolate_regions(era5_isc, 'eis', regions, 'ERA5',
+                                lowpass=lp)
     
     # Predictors
-    sst_anoms = isolate_regions(era5_data, 'sst', regions, 'ERA5')
-    sst_1983 = isolate_regions(era5_isc, 'sst', regions, 'ERA5')
+    # sst_anoms = isolate_regions(era5_data, 'sst', regions, 'ERA5')
+    sst_1983 = isolate_regions(era5_isc, 'sst', regions, 'ERA5',
+                               lowpass=lp)
     # theta_anoms = isolate_regions(era5_data, 'theta_700', regions, 'ERA5')
-    theta_1983 = isolate_regions(era5_isc, 'theta_700', regions, 'ERA5')
+    # theta_1983 = isolate_regions(era5_isc, 'theta_700', regions, 'ERA5')
     # Extended list of predictors
-    speed_anoms = isolate_regions(era5_isc, 'speed', regions, 'ERA5')
-    rh_700_anoms = isolate_regions(era5_isc, 'rh_700', regions, 'ERA5')
-    rh_1000_anoms = isolate_regions(era5_isc, 'rh_1000', regions, 'ERA5')
-    w_700_anoms = isolate_regions(era5_isc, 'w_700', regions, 'ERA5')
+    speed_anoms = isolate_regions(era5_isc, 'speed', regions, 'ERA5',
+                                  lowpass=lp)
+    rh_700_anoms = isolate_regions(era5_isc, 'rh_700', regions, 'ERA5',
+                                   lowpass=lp)
+    w_700_anoms = isolate_regions(era5_isc, 'w_700', regions, 'ERA5',
+                                  lowpass=lp)
     
-    cold_adv_anoms = isolate_regions(era5_isc, 'cold_adv', regions, 'ERA5')
+    cold_adv_anoms = isolate_regions(era5_isc, 'cold_adv', regions, 'ERA5',
+                                     lowpass=lp)
     # Variables we care for
     lcc_pred = pred_pc(lcc_anoms, pc_1983[['PC1', 'PC2']])
     # eis_pred = pred_pc(eis_anoms, pc_enso[['PC1', 'PC2']])
     # Cause of cloud anomalies
-    sst_pred = pred_pc(sst_anoms, pc_enso[['PC1', 'PC2']])
+    # sst_pred = pred_pc(sst_anoms, pc_enso[['PC1', 'PC2']])
     # theta_pred = pred_pc(theta_anoms, pc_enso[['PC1', 'PC2']])
     # Validation check
     #eis_cause = pred_var(eis_anoms, pred_dfs=[sst_anoms, theta_anoms],
@@ -174,19 +183,17 @@ def main():
     # extended lcc check
     
     cirr_anoms = isolate_regions(isccp_anom, 'high', regions, 'ISCCP',
-                                lowpass=True)
+                                lowpass=lp)
     
     lcc_causes = pred_var(lcc_anoms, pred_dfs=[sst_1983, eis_anoms,
-                                               rh_1000_anoms, cirr_anoms,
-                                               cold_adv_anoms],
+                                               rh_700_anoms, cirr_anoms,
+                                               cold_adv_anoms, speed_anoms,
+                                               w_700_anoms],
                          names=['SST', 'EIS',
-                                'RH 1000', 'Cirrus Frac', 'Cold Adv.'])
+                                '700 hPa Relative Humidity', 'Cirrus Fraction',
+                                'Cold Advection', '10m Windspeed',
+                                '700 hPa Subsidence'], normalize=True)
     
-    lcc_shapes = pearson(lcc_anoms, pred_dfs=[sst_1983, eis_anoms,
-                                               rh_1000_anoms, cirr_anoms,
-                                               cold_adv_anoms],
-                         names=['SST', 'EIS',
-                                'RH 1000', 'Cirrus Frac', 'Cold Adv.'])
     # EIS not good in SEP???
 if __name__ == '__main__':
     main()

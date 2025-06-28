@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import os
 import pandas as pd
+import copy
+
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import obs_scripts.shared_funcs as share
@@ -84,7 +86,8 @@ def isolate_events(xr_ds, ep_cp, state='El Nino', loc='Central'):
     return clim
 
 
-def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None, levels=4):
+def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None, levels=4,
+                   lims=share.pac_domain):
     """
     Loops over the composite dictionaries to create four plots for 
     our variable in cp/ep/mixed/nina conditions
@@ -103,11 +106,12 @@ def plot_comp_dict(comp_dict, var, ep_cp, cbar_lab='%', name=None, levels=4):
     
     for key, value in comp_dict.items():
         share.plot_scalar_field(value[var], title=names[key], levels=levels,
-                                lims=share.pac_domain, cbar_lab=cbar_lab)
+                                lims=lims, cbar_lab=cbar_lab)
 
 
 def main():
-    global ep_cp, era5_states, isccp_states, ebaf_states, ep_cp_2
+    global ep_cp, era5_states, isccp_states, ebaf_states
+    global ep_cp_2, anom_rad, anom_cloud, anom_met
     # Begin with ISCCP datas
     oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
     oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
@@ -118,13 +122,13 @@ def main():
     ep_cp['C_E_ratio'] = np.abs(ep_cp['C'] / ep_cp['E'])
     ep_cp = ep_cp.query('month >= 11 or month <= 2')
     # Assign state
-    ep_cp.loc['state'] = 'Neutral'
-    ep_cp.loc['state'][ep_cp.oni >= 0.5] = 'El Nino'
-    ep_cp.loc['state'][ep_cp.oni <= -0.5] = 'La Nina'
+    ep_cp['state'] = 'Neutral'
+    ep_cp['state'][ep_cp.oni >= 0.5] = 'El Nino'
+    ep_cp['state'][ep_cp.oni <= -0.5] = 'La Nina'
     # Group by spatial expression
-    ep_cp.loc['loc'] = 'Eastern'
-    ep_cp.loc['loc'][ep_cp.C_E_ratio >= 0.9] = 'Mixed'
-    ep_cp.loc['loc'][ep_cp.C_E_ratio >= 1.4] = 'Central'
+    ep_cp['loc'] = 'Eastern'
+    ep_cp['loc'][ep_cp.C_E_ratio >= 0.9] = 'Mixed'
+    ep_cp['loc'][ep_cp.C_E_ratio >= 1.4] = 'Central'
 
     # I want to tidy this and ensure the categories are consistent per event
     # Step 1: Define event groups Proceed with assuming we have 4 month groups
@@ -165,7 +169,7 @@ def main():
                                           loc='all')
     # Some demonstration plots
     plot_comp_dict(isccp_states, 'stratus', ep_cp, cbar_lab='%')
-    plot_comp_dict(era5_states, 'sst', ep_cp, cbar_lab='K')
+    plot_comp_dict(copy.deepcopy(era5_states), 'sst', ep_cp, cbar_lab='K')
 
     # Let's do the same for radiation to get lw/sw
         
@@ -178,13 +182,13 @@ def main():
     ep_cp_2['C_E_ratio'] = np.abs(ep_cp_2['C'] / ep_cp_2['E'])
     ep_cp_2 = ep_cp_2.query('month >= 11 or month <= 2')
     # Assign state
-    ep_cp_2.loc['state'] = 'Neutral'
-    ep_cp_2.loc['state'][ep_cp_2.oni >= 0.5] = 'El Nino'
-    ep_cp_2.loc['state'][ep_cp_2.oni <= -0.5] = 'La Nina'
+    ep_cp_2['state'] = 'Neutral'
+    ep_cp_2['state'][ep_cp_2.oni >= 0.5] = 'El Nino'
+    ep_cp_2['state'][ep_cp_2.oni <= -0.5] = 'La Nina'
     # Group by spatial expression
-    ep_cp_2.loc['loc'] = 'Eastern'
-    ep_cp_2.loc['loc'][ep_cp_2.C_E_ratio >= 0.9] = 'Mixed'
-    ep_cp_2.loc['loc'][ep_cp_2.C_E_ratio >= 1.4] = 'Central'
+    ep_cp_2['loc'] = 'Eastern'
+    ep_cp_2['loc'][ep_cp_2.C_E_ratio >= 0.9] = 'Mixed'
+    ep_cp_2['loc'][ep_cp_2.C_E_ratio >= 1.4] = 'Central'
     # Tidy
     breaks = ep_cp_2['year'].diff()
     # align with the actual year cutoffs
@@ -211,7 +215,58 @@ def main():
     ebaf_states['nina'] = isolate_events(ebaf_anom, ep_cp_2, 
                                          state='La Nina', loc='all')
     
+    if True:
+        # Big subplot sample call
+        data = [isccp_states, isccp_states, ebaf_states, 
+                ebaf_states, ebaf_states, ebaf_states]
+        titles = ['Stratus', 'Cirrus', 'SW TOA', 
+                  'LW TOA', 'SW SFC', 'LW SFC']
+        types = ['EP El Niño', 'CP El Niño', 'La Niña']
+        names = ['stratus', 'high', 'toa_sw_all_mon', 'toa_lw_all_mon',
+                 'sfc_net_sw_all_mon', 'sfc_net_lw_all_mon']
+        levels = [4, 6, 5, 6, 5, 5]
+        cbar_lab = ['%', '%', 'W/m²', 'W/m²', 'W/m²', 'W/m²']
+        
+        share.plot_scalar_subplot(data=data, titles=titles, types=types, 
+                                  names=names, cbar_lab=cbar_lab, levels=levels)
+
+    # Let's isolate the SEP region to calculate radiative fluxes
+    domain = share.ep_domain_360 
+    lat_bounds = domain[:2]
+    lon_bounds = domain[2:]
+    # Splice the SEP region
+    anom_rad = dict()
+    anom_cloud = dict()
+    anom_met = dict()
+    for state, value in ebaf_states.items():
+        anom_rad[state] = value.copy().sel(lat=slice(*lat_bounds), 
+                                           lon=slice(*lon_bounds))
+    for state, value in isccp_states.items():
+        anom_cloud[state] = value.copy().sel(lat=slice(*lat_bounds), 
+                                           lon=slice(*lon_bounds))
     
+    for state, value in era5_states.items():
+        value['lon'] = (value.lon + 360) % 360
+        anom_met[state] = value.sel(lat=slice(*lat_bounds[::-1]), 
+                                    lon=slice(*lon_bounds))
+        
+    rad_vars = ['toa_net_all_mon', 'sfc_net_tot_all_mon',
+                'toa_sw_all_mon', 'sfc_net_sw_all_mon',
+                'toa_lw_all_mon', 'sfc_net_lw_all_mon']
+    rad_info = []
+    phase = 'cp_nino'
+    
+    for var in rad_vars:
+        rad_info.append(anom_rad[phase][var].mean(dim=['lat', 'lon']))
+    for var, info in zip(rad_vars, rad_info):
+        print(f'Mean {var} during {phase} over SEP: {info:.2f}')
+    
+    mean_cloud = anom_cloud[phase]['stratus'].mean(dim=['lat', 'lon'])
+    print(f'Mean LCC change during {phase} over SEP: {mean_cloud:.2f}')
+    
+    mean_sst = anom_met[phase]['sst'].mean(dim=['lat', 'lon'])
+    print(f'Mean SST change during {phase} over SEP: {mean_sst:.2f}')
+
 
 if __name__ == '__main__':
     main()

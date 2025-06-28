@@ -171,6 +171,50 @@ def cold_adv(era5_data):
     # Compute advection
     cold_adv = -(u_mid * dsst_dx + v_mid * dsst_dy)
     return cold_adv
+
+
+def cold_adv_periodic(era5_data):
+    """
+    Calculates cold air advection using u10/v10 and SST gradients,
+    using periodic longitude derivatives to avoid 180° artifacts.
+    """
+    R_earth = 6.371e6
+    deg_to_rad = np.pi / 180.0
+
+    lat = era5_data['lat'] * deg_to_rad
+    lon = era5_data['lon'] * deg_to_rad
+
+    # Assume regular lat/lon spacing
+    dlat = float(lat[1] - lat[0])  # radians
+    dlon = float(lon[1] - lon[0])  # radians
+
+    # Grid spacing
+    dy = R_earth * dlat  # constant
+    dx = R_earth * np.cos(lat) * dlon  # varies with lat, shape (lat,)
+
+    # -- Latitude derivative (standard centered diff) --
+    dsst_dy = era5_data['sst'].differentiate('lat') / dy  # shape: (time, lat, lon)
+
+    # -- Longitude derivative: periodic central diff --
+    sst = era5_data['sst']
+    lon_dim = 'lon'
+    lat_dim = 'lat'
+
+    sst_roll_p1 = sst.roll({lon_dim: -1}, roll_coords=False)
+    sst_roll_m1 = sst.roll({lon_dim: 1}, roll_coords=False)
+
+    # dx is (lat,) so we need to broadcast to match (lat, lon)
+    dx_broadcast = dx.broadcast_like(sst.isel({lon_dim: 0}))  # shape (lat, lon)
+    dsst_dx = (sst_roll_p1 - sst_roll_m1) / (2 * dx_broadcast)
+
+    # -- Interpolate wind to match SST gradients --
+    u_mid = era5_data['u10'].interp(lat=dsst_dy.lat, lon=dsst_dx.lon)
+    v_mid = era5_data['v10'].interp(lat=dsst_dy.lat, lon=dsst_dx.lon)
+
+    # -- Compute cold air advection --
+    cold_adv = -(u_mid * dsst_dx + v_mid * dsst_dy)
+
+    return cold_adv
     
     
 def main():    
@@ -208,12 +252,14 @@ def main():
         era5_data['speed'] = np.hypot(era5_data['u10'], era5_data['v10'])
         era5_data['pv_700'] = era5_pres['pv'].sel(pressure_level=700)
         era5_data['pv_500'] = era5_pres['pv'].sel(pressure_level=500)
-        era5_data['cold_adv'] = cold_adv(era5_data)
         
         era5_data = share.crop_era5(era5_data, rename=True, 
                                     domain=share.pac_domain)
         era5_flux = share.crop_era5(era5_flux, rename=True, 
                                     domain=share.pac_domain)
+        # Calculate cold advection with wrapping and lat/lon names
+        era5_data['cold_adv'] = cold_adv_periodic(era5_data)
+        era5_data['cold_adv_smooth'] = share.smooth_data(era5_data['cold_adv'], 3)
         # Mean year
         climatology = era5_data.groupby('time.month').mean(dim='time')
         clim_rate = era5_flux.groupby('time.month').mean(dim='time')
@@ -241,7 +287,7 @@ def main():
         era5_flux.to_netcdf(file_flux)
     
     # era5_flux['time'] = era5_data.drop_vars('number').time
-    _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
+    _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=4,
                                 plot=False, region='equator', detrend=True)
     # Just so +ve PC1 is +ve ENSO, as per cloud_corr
     # pc_enso['PC1'] *= -1

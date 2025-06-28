@@ -24,6 +24,9 @@ import scipy.stats as stats
 import scipy.signal as signal
 import warnings
 from matplotlib.colors import TwoSlopeNorm
+from shapely.geometry import Polygon
+from pyproj import Geod
+from scipy.ndimage import gaussian_filter
 
 
 # Domains
@@ -389,7 +392,8 @@ def plot_scalar_simple(data, var, date="2022-12", title='',
     ax.set_title(title)
     
     # Use pcolormesh for a continuous plot
-    pcm = ax.pcolormesh(lon2d, lat2d, data, transform=ccrs.PlateCarree(), shading='auto', cmap='RdBu_r')
+    pcm = ax.pcolormesh(lon2d, lat2d, data, transform=ccrs.PlateCarree(), 
+                        shading='auto', cmap='RdBu_r')
     
     # Add coastlines and gridlines
     ax.coastlines()
@@ -405,14 +409,14 @@ def plot_scalar_simple(data, var, date="2022-12", title='',
     plt.show()
     
     
-def plot_scalar_field(data, title='', lims=None, cbar_lab='',
-                      source='isccp', levels=4):
+def plot_scalar_field(data, title='', lims=pac_domain, cbar_lab='',
+                      levels=4, to=''):
     """
     Contour plot of a scalar field by providing the data directly.
     """
-    era5 = data.fillna(0)
+    era5 = data.fillna(0).copy()
     proj = ccrs.PlateCarree(central_longitude=180)
-
+    # plt.subplots_adjust(left=0.05, right=0.95, top=0.9, bottom=0.1)
     # Ensure longitude wraps correctly if in 0-360 range
     if era5.lon.max() > 180:
         era5 = era5.assign_coords(lon=(((era5.lon + 180) % 360) - 180))
@@ -426,7 +430,8 @@ def plot_scalar_field(data, title='', lims=None, cbar_lab='',
     vmin, vmax = np.percentile(era5.values, [0.5, 99.5])  # Robust scaling
     norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)  
 
-    fig, ax = plt.subplots(subplot_kw={'projection': proj}, figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=600,
+                                     subplot_kw={'projection': proj})
     ax.set_global()
     ax.set_title(title)
 
@@ -450,15 +455,116 @@ def plot_scalar_field(data, title='', lims=None, cbar_lab='',
     ax.coastlines()
     ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
 
-    cbar = plt.colorbar(pcm, ax=ax, orientation='vertical', pad=0.05, shrink=0.65)
+    cbar = plt.colorbar(pcm, ax=ax, orientation='vertical',
+                        pad=0.05, shrink=0.65, format='%02d')
     cbar.set_label(cbar_lab)
     if lims is not None:
         ax.set_ylim(lims[0], lims[1])
-        ax.set_xlim(lims[3], lims[2])            
+        ax.set_xlim(lims[3], lims[2])  
+
+    if to:
+        fig.savefig(f'figures\saves\{to}.png', dpi=600,
+                    bbox_inches='tight', pad_inches=0)      
     plt.show()
     
     
-def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
+def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
+                        lims=pac_domain, cbar_lab=[],
+                        levels=[], to=''):
+    """
+    creates our 3*N subplot of various variables during CP EN, EP EN, and LN
+    
+    essentially loops over the plot_scalar_field functions, rewritten for subplots
+    
+    data is in form of a list of dictionaries containing the data for each phase
+    
+    titles is the title CP/EP EL Nino/La Nina
+    
+    cbar_lab, and types is the unit and data type corresponding to data
+    names contains the variable name within the dict
+    """
+    num_rows = len(titles)
+    num_cols = len(types)
+    
+    proj = ccrs.PlateCarree(central_longitude=180)
+    fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
+                        dpi=600, subplot_kw={'projection': proj},
+                        figsize=(10, 12))  # or adjust as needed)
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.7, bottom=0.01)
+    # top=0.35
+    for row in range(num_rows):
+        # =1 for 3 row subplot
+        if row < 2:
+            cmap = 'RdBu_r'
+        else:
+            cmap = 'PuOr_r'
+        for col, phase in zip(range(num_cols), data[row].keys()):
+            if phase == 'mix_nino':
+                #  Overwrite for now
+                phase = 'nina'
+            var = names[row]
+            curr_data = data[row][phase][var].fillna(0).copy()
+            # Correction to 0-360
+            if curr_data.lon.max() > 180:
+                curr_data = curr_data.assign_coords(lon=(((curr_data.lon +\
+                                                           180) % 360) - 180))
+                curr_data = curr_data.sortby('lon')
+            # Get lat/lon axis
+            lon = curr_data.lon.values
+            lat = curr_data.lat.values
+            lon2d, lat2d = np.meshgrid(lon, lat)
+            # Improved color normalization
+            vmin, vmax = np.percentile(curr_data.values, [0.5, 99.5])  # Robust scaling
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax) 
+            # plot setup   
+            axs[row, col].set_global()
+            axs[row, col].set_title(titles[row] + ' during ' + types[col],
+                                    fontsize='small', pad=5)
+            # pcolormesh plot
+            pcm = axs[row, col].pcolormesh(lon2d, lat2d, curr_data,
+                                           transform=ccrs.PlateCarree(), 
+                                shading='nearest', cmap=cmap, norm=norm)
+
+            # Contour overlay
+            tiers = np.linspace(vmin, vmax, levels[row])  # Define contour levels
+            lon1d = np.asarray(lon2d).reshape(-1)
+            lat1d = np.asarray(lat2d).reshape(-1)
+            data1d = np.asarray(curr_data).reshape(-1)
+            contour = axs[row, col].tricontour(lon1d, lat1d, data1d, 
+                                               levels=tiers, 
+                                    colors='black', linewidths=0.8, 
+                                  transform=ccrs.PlateCarree())
+            axs[row, col].clabel(contour, inline=True, fontsize=4,
+                     fmt="%.1f", inline_spacing=5)
+            # Map flavour
+            axs[row, col].coastlines()
+            gl = axs[row, col].gridlines(draw_labels=False, dms=True,
+                                         alpha=0.5)
+            if row == num_rows - 1:
+                gl.bottom_labels = True
+                gl.xlabel_style = {'size': 8}
+            if col == 0:
+                gl.left_labels = True
+                gl.ylabel_style = {'size': 8}
+            # Colorbar
+            cbar = plt.colorbar(pcm, ax=axs[row, col], location='right',
+                                pad=0.02, shrink=0.65, aspect=20, ticks=tiers)
+            # cbar.set_label(cbar_lab[row], labelpad=-20)
+            cbar.ax.set_yticklabels(['{:.1f}'.format(x) for x in cbar.get_ticks()])
+            cbar.ax.tick_params(labelsize=8)
+            axs[row, col].text(135, 47.5, cbar_lab[row], fontsize=8.5)
+            if lims is not None:
+                axs[row, col].set_ylim(lims[0], lims[1])
+                axs[row, col].set_xlim(lims[3], lims[2])  
+    # Savefig and show
+    if to:
+        fig.savefig(f'figures\saves\{to}.png', dpi=600,
+                    bbox_inches='tight', pad_inches=0)      
+    plt.show()
+
+
+    
+def plot_corr(corr_field, title='', lims=pac_domain, cbar_lab='R',
               shrink=0.65, levels=5):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
@@ -472,7 +578,9 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     
     # Ensure longitude wraps correctly if in 0-360 range
     if corr_field.lon.max() > 180:
-        corr_field['lon'] = ((corr_field.lon + 180) % 360) - 180
+        # I AM CHANGING THIS FOR NOW- ROLL BACK IF BROKEN
+        new_lons = ((corr_field.lon + 180) % 360) - 180
+        corr_field = corr_field.assign_coords(lon=new_lons)
         corr_field = corr_field.sortby('lon')
     # Extract data for plotting
     lon = corr_field.lon.values
@@ -486,16 +594,14 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     
     # Create meshgrid if needed
     lon2d, lat2d = np.meshgrid(lon, lat)
-    
     # Determine the color limits to center around zero
     vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
     norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
-
     # Create plot
     fig, ax = plt.subplots(subplot_kw={'projection': proj}, figsize=(10, 5))
     ax.set_global()
     ax.set_title(title)
-    masked_data = np.ma.masked_invalid(corr_field.data)
+    # masked_data = np.ma.masked_invalid(corr_field.data)
     # Use pcolormesh with centered color limits around zero
     pcm = ax.pcolormesh(lon2d, lat2d, corr_field.data, transform=ccrs.PlateCarree(),
                         shading='auto', cmap='RdBu_r', norm=norm)
@@ -509,7 +615,8 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     contour = ax.tricontour(lon1d, lat1d, corr1d, levels=levels, 
                         colors='black', linewidths=0.8, 
                       transform=ccrs.PlateCarree())
-    ax.clabel(contour, inline=True, fontsize=8, fmt="%.2f", inline_spacing=5)
+    #ax.clabel(contour, inline=True, fontsize=4,
+    #         fmt="%.1f", inline_spacing=5)
     
     # Add coastlines and gridlines
     ax.coastlines()
@@ -530,6 +637,101 @@ def plot_corr(corr_field, title='', lims=cz_domain_180, cbar_lab='R',
     plt.show()
 
 
+def plot_corr_subplot(data, to_corr, vars1, vars2,
+                      titles, types, lims=pac_domain, levels=5, to=''):
+    """
+    Plots a N data * N to_corr subplot correlating each array with a timeseries
+    of entries. Plots the pearson correlation for each plot at 99% sig
+    
+    data and to_corr are lists containing xarray/pandas dataframes containing
+    the information we want to correlate
+    
+    vars1 and vars2 tell us the native variable names within data and to_corr
+    these also correspond to titles/types
+    """
+    num_rows = len(data)
+    num_cols = len(to_corr)
+
+    proj = ccrs.PlateCarree(central_longitude=180)
+    fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
+                        dpi=600, subplot_kw={'projection': proj},
+                        figsize=(10, 9))  # or adjust as needed)
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.8, bottom=0.01)
+    # top=0.65
+    
+    for row in range(num_rows):
+        for col, array in enumerate(to_corr):
+            corr = calc_corr_vect(data[row], vars1[row], to_corr[col], vars2[col])
+            corr_field = corr.fillna(0)
+            # Wrapping for ERA5
+            if corr_field.lon.max() > 180:
+                corr_field['lon'] = ((corr_field.lon + 180) % 360) - 180
+                corr_field = corr_field.sortby('lon')
+            # Extract data for plotting
+            lon = corr_field.lon.values
+            lat = corr_field.lat.values
+            # Non sig value mask
+            nonsig = np.zeros(corr_field.shape)
+            nonsig[np.isnan(corr_field)] = 1
+            # Create meshgrid if needed
+            lon2d, lat2d = np.meshgrid(lon, lat)
+            # Determine the color limits to center around zero
+            vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+            # Begin plotting
+            axs[row, col].set_global()
+            axs[row, col].set_title(titles[row] + ' and ' + types[col],
+                                    fontsize='small')
+            # masked_data = np.ma.masked_invalid(corr_field.data)
+            # Use pcolormesh with centered color limits around zero
+            pcm = axs[row, col].pcolormesh(lon2d, lat2d, corr_field.data,
+                                           transform=ccrs.PlateCarree(),
+                                shading='auto', cmap='RdBu_r', norm=norm)
+            pcm2 = axs[row, col].pcolormesh(lon2d, lat2d, nonsig.data,
+                                            transform=ccrs.PlateCarree(),
+                                shading='auto', cmap='Greys', alpha=0.1)
+            
+            tiers = np.linspace(vmin, vmax, levels)
+            lon1d = np.asarray(lon2d).reshape(-1)
+            lat1d = np.asarray(lat2d).reshape(-1)
+            corr1d = np.asarray(corr_field).reshape(-1)
+            contour = axs[row, col].tricontour(lon1d, lat1d, corr1d,
+                                               levels=tiers, 
+                                    colors='black', linewidths=0.8, 
+                                  transform=ccrs.PlateCarree())
+            axs[row, col].clabel(contour, inline=True, fontsize=4,
+                     fmt="%.1f", inline_spacing=5)
+            
+            # Add coastlines and gridlines
+            axs[row, col].coastlines()
+            gl = axs[row, col].gridlines(draw_labels=False, dms=True,
+                                         alpha=0.5)
+            if row == num_rows - 1:
+                gl.bottom_labels = True
+                gl.xlabel_style = {'size': 8}
+            if col == 0:
+                gl.left_labels = True
+                gl.ylabel_style = {'size': 8}
+            
+            # Add colorbar and label
+            cbar = plt.colorbar(pcm, ax=axs[row, col], location='right',
+                                pad=0.02, shrink=0.75, aspect=20, ticks=tiers)
+            cbar.ax.set_yticklabels(['{:.1f}'.format(x) for x in cbar.get_ticks()])
+            cbar.ax.tick_params(labelsize=8)
+            # Set plot limits if specified
+            if lims is not None and len(lims) == 4:
+                axs[row, col].set_ylim(lims[0], lims[1])
+                axs[row, col].set_xlim(lims[3], lims[2])
+            if lims is not None and len(lims) == 2:
+                # Set to tropics still
+                axs[row, col].set_ylim(lims[0], lims[1])
+    # Savefig and show
+    if to:
+        fig.savefig(f'figures\saves\{to}.png', dpi=600,
+                    bbox_inches='tight', pad_inches=0)  
+    plt.show()
+            
+            
 def domain_anom(era5_anom, var):
     """
     Calculates the domain sst anomaly in era5 and returns a pandas df
@@ -581,7 +783,7 @@ def polyfit_detrend(dataarray, dim='time'):
 
 
 def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
-             detrend=False, exclude_land=True, sst_data=None):
+             detrend=False, exclude_land=False, sst_data=None):
     """
     Calculates the first EOF of the SST anomalies across the Pacific.
     Prints explained variance as well.
@@ -592,11 +794,10 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
     You can now provide sst as a mask separately, but it must be the same
     shape 
     """    
-    if sst_data is None:
-        sst_data = era5_anom['sst']
     # Retains dataset object for now
     era5_anom = era5_anom[[var]].copy()
-    if exclude_land:
+    if exclude_land and sst_data is None:
+        sst_data = era5_anom['sst']
         era5_anom[var] = era5_anom[var].where(sst_data.notnull())
     if detrend:
         era5_anom = era5_anom.map(lambda da: polyfit_detrend(da, 'time'))
@@ -608,7 +809,7 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
     # Sort by latitude as well if necessary
     era5_anom = era5_anom.sortby('lat')
     if region=='equator':
-        # Reduce our area to equator as per Takahashi
+        # Reduce our area to Pacific equator as per Takahashi
         era5_anom = era5_anom.sel(lat=slice(-10, 10))
     elif region=='tropics':
         era5_anom = era5_anom.sel(lat=slice(-30, 30))
@@ -1024,7 +1225,7 @@ def convert_longitude(lon, to_360=True):
         return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
 
 
-def plot_pcs(pc_enso):
+def plot_pcs(pc_enso, one='PC1', two='PC2'):
     """
     Plots PC1 vs. PC2 scatter, along with axes for C and E. Tries to fit a 
     polynomial curve to the data as per
@@ -1034,18 +1235,18 @@ def plot_pcs(pc_enso):
     """
     enso_peak = pc_enso.query('month <= 1 or month >= 11')
     
-    fit = np.polyfit(enso_peak['PC1'], enso_peak['PC2'], 2)
+    fit = np.polyfit(enso_peak[one], enso_peak[two], 2)
     
-    x = np.linspace(enso_peak['PC1'].min(), enso_peak['PC1'].max(),
-                    num=len(enso_peak['PC1']))
-    x2 = np.linspace(pc_enso['PC1'].min(), pc_enso['PC1'].max(),
-                    num=len(pc_enso['PC1']))
+    x = np.linspace(enso_peak[one].min(), enso_peak[one].max(),
+                    num=len(enso_peak[one]))
+    x2 = np.linspace(pc_enso[one].min(), pc_enso[one].max(),
+                    num=len(pc_enso[one]))
     poly = np.polyval(fit, x)
     
     plt.figure(figsize=(5, 5))
-    plt.scatter(pc_enso['PC1'], pc_enso['PC2'], alpha=0.5, color='grey',
+    plt.scatter(pc_enso[one], pc_enso[two], alpha=0.5, color='grey',
                 label='All Year', zorder=15, s=1)
-    plt.scatter(enso_peak['PC1'], enso_peak['PC2'], color='black',
+    plt.scatter(enso_peak[one], enso_peak[two], color='black',
                 label='NDJ', zorder=20, s=1.2, alpha=0.8)
     plt.plot(x2, x2, color='darkred', linewidth=0.5, 
              label='C')
@@ -1058,13 +1259,62 @@ def plot_pcs(pc_enso):
     plt.ylabel('PC2')
     plt.show()
     
+
+def calc_area(domain):
+    """
+    Calculates area in m2 for a rectangle defined by the coordinate
+    domains at the start of this file
+    
+    coords shouold be in 0-360
+    """
+    lat1, lat2, lon1, lon2 = domain
+    # Change to coordinates
+    coords = [(lon1, lat2), (lon1, lat1),
+              (lon2, lat1), (lon2, lat2)]
+    # Create a polygon and give it georeference
+    poly = Polygon(coords)
+    geod = Geod(ellps="WGS84")
+    # Calc and return area
+    area, _ = geod.geometry_area_perimeter(poly)
+    return abs(area)
     
     
+def smooth_data(era5_field, sigma=3):
+    """
+    Gaussian smooths a given field and returns it. Wraps around to prevent
+    artifact at 180 deg
+    """
+    n_wrap = int(3 * sigma)
+    wrapped = xr.concat(
+        [era5_field.isel(lon=slice(-n_wrap, None)),
+         era5_field,
+         era5_field.isel(lon=slice(0, n_wrap))],
+        dim="lon")
+    smoothed_wrapped = xr.apply_ufunc(
+        gaussian_filter, wrapped,
+        input_core_dims=[["lat", "lon"]],
+        output_core_dims=[["lat", "lon"]],
+        kwargs={"sigma": sigma},
+        vectorize=True)
+
+    # Crop back to original longitude range
+    smoothed = smoothed_wrapped.isel(lon=slice(n_wrap, -n_wrap))
+    smoothed = smoothed.assign_coords(lon=era5_field.lon)
+    return smoothed
+
+
+def plot_enso_season(data, start_year, field, title='', cbar_lab='',
+                      levels=4, to=''):
+    """
+    Plots the NDJF average of a certain field, starting at start_year
+    """
+    date1 = f'{start_year}-11-01'
+    date2 = f'{start_year+1}-02-28'
+    season = data[field].sel(time=slice(date1, date2))
+    season = season.mean(dim='time')
     
-    
-    
-    
-    
+    plot_scalar_field(season, lims=pac_domain, title=title, cbar_lab=cbar_lab,
+                      levels=levels, to=to)
     
     
     
