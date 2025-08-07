@@ -145,6 +145,8 @@ def main():
             transform(lambda x: assign_state(list(x.values)))
     
     # Let's load in the ERA5 and ISCCP files now
+    # date filtering??    
+    
     isccp_anom = xr.load_dataset('era5_reanal/timeseries/isccp_anom.nc')
     era5_data = xr.load_dataset('era5_all/timeseries/era5_anom_all.nc')
     era5_iscc = era5_data.sel({'time': isccp_anom.time})

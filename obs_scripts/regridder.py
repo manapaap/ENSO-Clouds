@@ -17,6 +17,24 @@ import xesmf as xe
 chdir('/mnt/c/Users/aakas/Documents/ENSO-Clouds/')
 
 
+def convert_longitude(lon, to_360=True):
+    """
+    Convert longitude between -180 to 180 and 0 to 360.
+
+    Parameters:
+        lon (float or array-like): Longitude value(s) to convert.
+        to_360 (bool): If True, convert from [-180, 180] to [0, 360].
+                       If False, convert from [0, 360] to [-180, 180].
+
+    Returns:
+        Converted longitude value(s).
+    """
+    if to_360:
+        return (lon + 360) % 360  # Convert -180 to 180 -> 0 to 360
+    else:
+        return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
+
+
 def load_data(input_folder):
     """
     Loads data from folder and resturls merged dataset with var
@@ -89,7 +107,10 @@ def main():
     new_data['lat'] = new_data.lat[:, 0].to_numpy()
     new_data = new_data.assign_coords({'lat': new_data['lat'],
                                        'lon': new_data['lon']})
-
+    # Set to 0-360
+    if float(new_data.lon.min()) < 0:
+        new_data['lon'] = convert_longitude(new_data.lon, to_360=True)
+        new_data = new_data.sortby('lon')
     # print(new_data)
     print('Saving file...')
     new_data.to_netcdf(output_folder + name)

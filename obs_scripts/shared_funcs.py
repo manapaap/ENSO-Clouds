@@ -1225,7 +1225,7 @@ def convert_longitude(lon, to_360=True):
         return ((lon + 180) % 360) - 180  # Convert 0 to 360 -> -180 to 180
 
 
-def plot_pcs(pc_enso, one='PC1', two='PC2'):
+def plot_pcs(pc_enso, one='PC1', two='PC2', title=''):
     """
     Plots PC1 vs. PC2 scatter, along with axes for C and E. Tries to fit a 
     polynomial curve to the data as per
@@ -1254,6 +1254,7 @@ def plot_pcs(pc_enso, one='PC1', two='PC2'):
              label='E')
     plt.plot(x, poly, label='Poly Fit', zorder=17)
     plt.grid()
+    plt.title(title)
     plt.legend()
     plt.xlabel('PC1')
     plt.ylabel('PC2')
