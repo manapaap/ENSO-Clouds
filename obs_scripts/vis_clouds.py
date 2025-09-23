@@ -437,7 +437,7 @@ def main():
     # Write EOF to file for later
     pc_enso.to_csv('misc_data/enso_pcs_isccp.csv', index=False)
     
-    if False:
+    if True:
         # sample call for big subplot
         data = [isccp_anom, isccp_anom, isccp_anom, era5_data]
         to_corr = [pc_enso, pc_enso, nino_idx]

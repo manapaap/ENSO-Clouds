@@ -299,7 +299,7 @@ def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     a_FDR = 2 * (1 - sig)
     p_FDR = max([p for n, p in enumerate(p_values) if p <= a_FDR * n / n_samples])
     # Adjust sig_level for two-tailed test
-    adjusted_sig = (1 - p_FDR) / 2
+    adjusted_sig = 1 - (p_FDR / 2)
     t_crit = t.ppf(adjusted_sig, df=len(xr_ds.time) - 2)
     # Mask insignificant values
     sig_corr = corr.where(np.abs(t_stat) > t_crit)
