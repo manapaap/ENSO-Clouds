@@ -20,7 +20,7 @@ os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import obs_scripts.shared_funcs as share
 
 
-def combine_files(folder='CMIP6/NOAA-GFDL/cllcalipso/'):
+def combine_files(folder='CMIP6/NOAA-GFDL/cllcalipso/', isccp=False):
     """
     Reads and combines all the raw files into a
     single xarray file which can be handled
@@ -37,6 +37,16 @@ def combine_files(folder='CMIP6/NOAA-GFDL/cllcalipso/'):
         except Exception as e:
             print(f"Error loading {file}: {e}")
             print(file)
+    if isccp:
+        for n, array in enumerate(loaded):
+            if 'pressure2' in array.coords:
+                # Rename IPSL 
+                array = array.rename({'pressure2': 'plev'})
+            if "plev7" in array.coords:
+                # rename CNRM
+                array = array.rename({'plev7': 'plev'}).\
+                    drop_vars(['plev7_bounds', 'tau_bounds', 'time_bounds'])
+            loaded[n] = isccp_to_sc(array)
     output = xr.merge(loaded)
     # Go to single time from time band for convenience
     try:
@@ -64,6 +74,9 @@ def combine_files(folder='CMIP6/NOAA-GFDL/cllcalipso/'):
         # This is for IPSL now...
         output = output.drop_vars(['time_bounds', 'plev_bounds', 'plev'],
                                   errors='ignore')
+    elif 'time_bounds' in list(output.data_vars):
+        # CNRM correction
+        output = output.drop_vars(['time_bounds'])
         
     return output
 
@@ -74,7 +87,11 @@ def isccp_to_sc(data):
     stratus and stratocumulus clouds and returns a smaller dataarray
     containing just that variable
     """
+    data = data.sel({'plev': slice(1000 * 100, 680 * 100),
+                           'tau': slice(3.6, 360)}).sum(dim=["tau", "plev"])
+    data = keep_vars_coords(data, ['clisccp'], ['lat', 'lon', 'time'])
     
+    return data
 
 
 def deseasonalize(data):
@@ -109,9 +126,9 @@ def calc_nino_anom(data, rem_trend=True):
     return nino
 
 
-def plot_gcm_corr_subplot(data, to_corr, var, titles, types, 
-                          vars2 = ['E', 'C', 'nino_3.4'],
-                          lims=share.pac_domain, levels=5, to=''):
+def plot_gcm_corr_subplot(data, to_corr, var, titles, types, name='Sc + St',
+                          vars2 = ['E', 'C', 'nino_3.4'], fsize=(9, 12),
+                          lims=share.pac_domain, levels=5, to='', cmap='RdBu_r'):
     """
     Plots a N data * N to_corr subplot correlating each array with a timeseries
     of entries. Plots the pearson correlation for each plot at 99% sig
@@ -133,7 +150,7 @@ def plot_gcm_corr_subplot(data, to_corr, var, titles, types,
     proj = ccrs.PlateCarree(central_longitude=180)
     fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
                         dpi=600, subplot_kw={'projection': proj},
-                        figsize=(10, 9))  # or adjust as needed)
+                        figsize=fsize)  # or adjust as needed)
     fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.95, bottom=0.01)
     # top=0.65
     
@@ -159,14 +176,14 @@ def plot_gcm_corr_subplot(data, to_corr, var, titles, types,
             norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
             # Begin plotting
             axs[row, col].set_global()
-            axs[row, col].set_title(titles[row] + ' ' + var + ' and ' +\
+            axs[row, col].set_title(titles[row] + ' ' + name + ' and ' +\
                                     types[col],
                                     fontsize='small')
             # masked_data = np.ma.masked_invalid(corr_field.data)
             # Use pcolormesh with centered color limits around zero
             pcm = axs[row, col].pcolormesh(lon2d, lat2d, corr_field.data,
                                            transform=ccrs.PlateCarree(),
-                                shading='auto', cmap='RdBu_r', norm=norm)
+                                shading='auto', cmap=cmap, norm=norm)
             pcm2 = axs[row, col].pcolormesh(lon2d, lat2d, nonsig.data,
                                             transform=ccrs.PlateCarree(),
                                 shading='auto', cmap='Greys', alpha=0.1)
@@ -237,22 +254,16 @@ def main():
     start_date = '1983-07-01'
     end_date = '2017-06-02'
 
-    gfdl_cll = combine_files('CMIP6/NOAA-GFDL-CM4/cllcalipso/').\
-        sel(time=slice(start_date, end_date))
+    # gfdl_cll = combine_files('CMIP6/NOAA-GFDL-CM4/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date))
         
     # Clean the isccp data
-    gfdl_sc = xr.load_dataset('CMIP6/NOAA-GFDL-CM4/clisccp/' +\
-                              'clisccp_CFmon_GFDL-CM4_historical' +\
-                              '_r1i1p1f1_gr1_195001-201412.nc').\
-                                  sel(time=slice(start_date, end_date))
-    gfdl_sc = gfdl_sc.sel({'plev': slice(1000 * 100, 680 * 100),
-                           'tau': slice(3.6, 360)}).sum(dim=["tau", "plev"])
-    gfdl_sc = keep_vars_coords(gfdl_sc, ['clisccp'], ['lat', 'lon', 'time'])
+    gfdl_sc = combine_files('CMIP6/NOAA-GFDL-CM4/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date))
     gfdl_sst = combine_files('CMIP6/NOAA-GFDL-CM4/sst/').\
         sel(time=slice(start_date, end_date))
-    gfdl_sc['time'] = gfdl_sst.time
     
-    gfdl_cll = deseasonalize(gfdl_cll)
+    # gfdl_cll = deseasonalize(gfdl_cll)
     gfdl_sc = deseasonalize(gfdl_sc)
     gfdl_sst = deseasonalize(gfdl_sst)
     # restrict sst field to pacific domain
@@ -267,13 +278,16 @@ def main():
     # It works! and we fail to see a correlation in the region of intrest
         
     # Let's try this with E3SM
-    e3sm_cll = combine_files('CMIP6/E3SM-1-1/cllcalipso/').\
+    # e3sm_cll = combine_files('CMIP6/E3SM-1-1/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date))
+    e3sm_sc = combine_files('CMIP6/E3SM-1-1/clisccp/', isccp=True).\
         sel(time=slice(start_date, end_date))
     e3sm_sst = combine_files('CMIP6/E3SM-1-1/sst/').\
         sel(time=slice(start_date, end_date))
         
-    e3sm_cll = deseasonalize(e3sm_cll)
+    # e3sm_cll = deseasonalize(e3sm_cll)
     e3sm_sst = deseasonalize(e3sm_sst)
+    e3sm_sc = deseasonalize(e3sm_sc)
     # restrict sst field to pacific domain
     e3sm_crop = e3sm_sst.sel(lon=slice(120, 300))
     _, e3sm_eof = share.calc_eof(e3sm_crop, 'tos', n_pc=2, exclude_land=False,
@@ -284,13 +298,16 @@ def main():
    
     
     # try this with IPSL CM6
-    ipsl_cll = combine_files('CMIP6/IPSL-CM6A/cllcalipso/').\
-        sel(time=slice(start_date, end_date))    
+    # ipsl_cll = combine_files('CMIP6/IPSL-CM6A/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date))    
     ipsl_sst = combine_files('CMIP6/IPSL-CM6A/sst_clean/').\
         sel(time=slice(start_date, end_date))  
+    ipsl_sc = combine_files('CMIP6/IPSL-CM6A/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date))  
     
-    ipsl_cll = deseasonalize(ipsl_cll)
+    # ipsl_cll = deseasonalize(ipsl_cll)
     ipsl_sst = deseasonalize(ipsl_sst)
+    ipsl_sc = deseasonalize(ipsl_sc)
 
     ipsl_crop = ipsl_sst.sel(lon=slice(120, 300))
     _, ipsl_eof = share.calc_eof(ipsl_crop, 'tos', n_pc=2, exclude_land=False,
@@ -302,11 +319,14 @@ def main():
     # CESM
     cesm_sst = combine_files('CMIP6/NCAR-CESM2/sst/').\
         sel(time=slice(start_date, end_date))  
-    cesm_cll = combine_files('CMIP6/NCAR-CESM2/cllcalipso/').\
+    # cesm_cll = combine_files('CMIP6/NCAR-CESM2/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date))  
+    cesm_sc = combine_files('CMIP6/NCAR-CESM2/clisccp/', isccp=True).\
         sel(time=slice(start_date, end_date))  
-    
-    cesm_cll = deseasonalize(cesm_cll)
-    cesm_sst = deseasonalize(cesm_sst)    
+
+    # cesm_cll = deseasonalize(cesm_cll)
+    cesm_sst = deseasonalize(cesm_sst)   
+    cesm_sc = deseasonalize(cesm_sc)
     
     cesm_crop = cesm_sst.sel(lon=slice(120, 300))
     _, cesm_eof = share.calc_eof(cesm_crop, 'tos', n_pc=2, exclude_land=False,
@@ -319,11 +339,14 @@ def main():
     # CanESM6
     canesm_sst = combine_files('CMIP6/CanESM5/sst_clean/').\
         sel(time=slice(start_date, end_date))  
-    canesm_cll = combine_files('CMIP6/CanESM5/cllcalipso/').\
+    # canesm_cll = combine_files('CMIP6/CanESM5/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date))  
+    canesm_sc = combine_files('CMIP6/CanESM5/clisccp/', isccp=True).\
         sel(time=slice(start_date, end_date))  
 
-    canesm_cll = deseasonalize(canesm_cll)
+    # canesm_cll = deseasonalize(canesm_cll)
     canesm_sst = deseasonalize(canesm_sst)
+    canesm_sc = deseasonalize(canesm_sc)
 
     canesm_crop = canesm_sst.sel(lon=slice(120, 300))
     _, canesm_eof = share.calc_eof(canesm_crop, 'tos', n_pc=2, exclude_land=False,
@@ -336,11 +359,14 @@ def main():
     
     mri_sst = combine_files('CMIP6/MRI-ESM2/sst/').\
         sel(time=slice(start_date, end_date)) 
-    mri_cll = combine_files('CMIP6/MRI-ESM2/cllcalipso/').\
-        sel(time=slice(start_date, end_date)) 
+    # mri_cll = combine_files('CMIP6/MRI-ESM2/cllcalipso/').\
+    #     sel(time=slice(start_date, end_date)) 
+    mri_sc = combine_files('CMIP6/MRI-ESM2/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date))  
         
     mri_sst = deseasonalize(mri_sst)
-    mri_cll = deseasonalize(mri_cll)
+    # mri_cll = deseasonalize(mri_cll)
+    mri_sc = deseasonalize(mri_sc)
     
     mri_crop = mri_sst.sel(lon=slice(120, 300))
     _, mri_eof = share.calc_eof(mri_crop, 'tos', n_pc=2, exclude_land=False,
@@ -349,49 +375,91 @@ def main():
     mri_eof = share.rotate_enso_eof(mri_eof)
     mri_eof['nino_3.4'] = calc_nino_anom(mri_sst)
     
-    # UKESM- broken for some regridding issue
-    
-    if True:
-        ukesm_sst = combine_files('CMIP6/UKESM/sst_clean/').\
-            sel(time=slice(start_date, end_date)) 
-        ukesm_cll = combine_files('CMIP6/UKESM/cllcalipso/').\
-            sel(time=slice(start_date, end_date)) 
-            
-        ukesm_sst = deseasonalize(ukesm_sst)
-        ukesm_cll = deseasonalize(ukesm_cll)
-        
-        ukesm_crop = ukesm_sst.sel(lon=slice(120, 300))
-        _, ukesm_eof = share.calc_eof(ukesm_crop, 'tos', n_pc=2, exclude_land=False,
-                                  plot=False, region='equator', detrend=True)
-        # mri_eof['PC2'] *= -1
-        ukesm_eof = share.rotate_enso_eof(ukesm_eof)
-    
-  
+    # UKESM- fixed!
 
+    ukesm_sst = combine_files('CMIP6/UKESM/sst_clean/').\
+        sel(time=slice(start_date, end_date)) 
+    ukesm_sc = combine_files('CMIP6/UKESM/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date)) 
+        
+    ukesm_sst = deseasonalize(ukesm_sst)
+    ukesm_sc = deseasonalize(ukesm_sc)
+    
+    ukesm_crop = ukesm_sst.sel(lon=slice(120, 300))
+    _, ukesm_eof = share.calc_eof(ukesm_crop, 'tos', n_pc=2, exclude_land=False,
+                              plot=False, region='equator', detrend=True)
+    ukesm_eof['PC1'] *= -1
+    ukesm_eof = share.rotate_enso_eof(ukesm_eof)
+    ukesm_eof['nino_3.4'] = calc_nino_anom(ukesm_sst)
+        
+    
+    miroc_sst = combine_files('CMIP6/MIROC6/sst_clean/').\
+        sel(time=slice(start_date, end_date)) 
+    miroc_sc = combine_files('CMIP6/MIROC6/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date))   
+    
+    miroc_sst = deseasonalize(miroc_sst)
+    miroc_sc = deseasonalize(miroc_sc)
+    
+    miroc_crop = miroc_sst.sel(lon=slice(120, 300))
+    _, miroc_eof = share.calc_eof(miroc_crop, 'tos', n_pc=2, exclude_land=False,
+                              plot=False, region='equator', detrend=True)
+    miroc_eof['PC1'] *= -1
+    miroc_eof = share.rotate_enso_eof(miroc_eof)
+    miroc_eof['nino_3.4'] = calc_nino_anom(miroc_sst)
+    
+    
+    cnrm_sst = combine_files('CMIP6/CNRM/sst/').\
+        sel(time=slice(start_date, end_date)) 
+    cnrm_sc = combine_files('CMIP6/CNRM/clisccp/', isccp=True).\
+        sel(time=slice(start_date, end_date))
+        
+    cnrm_sst = deseasonalize(cnrm_sst)
+    cnrm_sc = deseasonalize(cnrm_sc)
+    
+    cnrm_crop = cnrm_sst.sel(lon=slice(120, 300))
+    _, cnrm_eof = share.calc_eof(cnrm_crop, 'tos', n_pc=2, exclude_land=False,
+                              plot=False, region='equator', detrend=True)
+    cnrm_eof['PC1'] *= -1
+    cnrm_eof = share.rotate_enso_eof(cnrm_eof)
+    cnrm_eof['nino_3.4'] = calc_nino_anom(cnrm_sst)
+    
+    
+    
     # Steps:
     # Combine files for my sanity
     # restrict to ISCCP period
     # remove annual cycle
     # calculate SST PCs and rotate
     # 
-    global data, data2, to_corr
+    global data3, data2, to_corr
     if True:
-        data = [gfdl_cll, e3sm_cll, ipsl_cll, 
-                cesm_cll, canesm_cll, mri_cll]
+        # data = [gfdl_cll, e3sm_cll, ipsl_cll, 
+        #         cesm_cll, canesm_cll, mri_cll]
         data2 = [gfdl_sst, e3sm_sst, ipsl_sst, 
-                cesm_sst, canesm_sst, mri_sst]
+                cesm_sst, canesm_sst, mri_sst, miroc_sst, cnrm_sst, ukesm_sst]
+        data3 = [gfdl_sc, e3sm_sc, ipsl_sc, 
+                cesm_sc, canesm_sc, mri_sc, miroc_sc, cnrm_sc, ukesm_sc]
         
         to_corr = [gfdl_eof, e3sm_eof, ipsl_eof, 
-                   cesm_eof, canesm_eof, mri_eof]
-        var = 'cllcalipso'
-        titles= ['NOAA-GFDL-CM4', 'DOE-E3SM', 'IPSL-CM6A',
-                 'NCAR-CESM2', 'CanESM5', 'MRI-ESM2']
+                   cesm_eof, canesm_eof, mri_eof, miroc_eof, cnrm_eof, ukesm_eof]
+        var = 'tos'
+        titles= ['NOAA-GFDL', 'DOE-E3SM', 'IPSL-CM6A',
+                 'NCAR-CESM2', 'CanESM5', 'MRI-ESM2', 'MIROC6', 'CNRM', 'UKESM']
         types = ['E Index', 'C Index', 'Niño 3.4']
         
-        plot_gcm_corr_subplot(data, to_corr, var, titles, types)
+        plot_gcm_corr_subplot(data3, to_corr, 'clisccp', titles, types,
+                              name='Sc + St', cmap='PRGn_r')
         
-
-
+    
+    var = 'clisccp'
+    types = ['E Index', 'C Index', 'Niño 3.4']
+    data_small = [cesm_sc, ipsl_sc, miroc_sc]
+    to_corr = [cesm_eof, ipsl_eof, miroc_eof]
+    titles = ['NCAR-CESM2', 'IPSL-CM6A', 'MIROC6']
+    plot_gcm_corr_subplot(data_small, to_corr, var, titles, types, cmap='PRGn_r',
+                          fsize=(9, 4), name='Sc + St')
+    
 if __name__ == '__main__':
     main()
 

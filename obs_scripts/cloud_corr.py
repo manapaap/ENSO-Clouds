@@ -71,7 +71,7 @@ def main():
     # Create a lagged index by arbitrary number of months
     nino_idx['3.4_anom_lag'] = nino_idx['3.4_anom'].shift(2)
     
-    global era5_anom, ceres_anom, ebaf_anom, era5_flux   
+    global era5_anom, ceres_anom, ebaf_anom, era5_flux, pc_enso 
     file_era5 = 'era5_reanal/timeseries/era5_anom.nc'
     file_flux = 'era5_reanal/timeseries/era5_flux.nc'
     file_ceres = 'era5_reanal/timeseries/ceres_syn.nc'
