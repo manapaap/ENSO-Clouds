@@ -61,7 +61,7 @@ def isccp_cloud_dict():
     # Simplified
     simp = {13: 'high', 16: 'high', 14: 'high', 17: 'high',
             15: 'deep', 18: 'deep', 7: 'mid', 10: 'mid', 
-            8: 'mid', 11: 'mid', 9: 'stratus', 12: 'stratus',
+            8: 'mid', 11: 'mid', 9: 'mid', 12: 'mid',
             1: 'cumulus', 4: 'cumulus', 2: 'stratus', 5: 'stratus',
             3: 'stratus', 6: 'stratus'}
     
@@ -380,6 +380,85 @@ def cloud_types(isccp_anom, cloud_dict):
     return isccp_anom
 
 
+def isolate_enso(xr_ds, oni_idx, out='El Nino'):
+    """
+    Isolates El Nino or La Nina months from xr_ds based on ONI criteria
+    """
+    vect = oni_idx.copy()
+    # Convert the vector data to a time-indexed DataArray
+    vect['time'] = pd.to_datetime(dict(year=vect['year'], 
+                                       month=vect['month'], day=1))
+    vect = vect.set_index('time')
+    
+    if out == 'El Nino':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni >= 0.5')
+    elif out == 'La Nina':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni <= -0.5')
+    elif out == 'Neutral':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('-0.5 <= oni <= 0.5')
+    elif out =='NDJF':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+    else:
+        # do nothing
+        vect = vect
+    vect_da = xr.DataArray(vect['oni'], coords=[vect.index], dims=['time'])
+    # Find the intersection of time periods
+    common_times = xr_ds.time.to_index().intersection(vect_da.time.to_index())
+    # Align datasets to this common time range
+    xr_ds = xr_ds.sel(time=common_times)
+    vect_da = vect_da.sel(time=common_times)
+    return xr_ds
+
+
+def isolate_enso_idx(pc_enso, oni_idx, out='El Nino'):
+    """
+    Isolates El Nino or La Nina months from xr_ds based on ONI criteria
+    """
+    vect = oni_idx.copy()
+    idx = pc_enso.copy()
+    # Convert the vector data to a time-indexed DataArray
+    vect['time'] = pd.to_datetime(dict(year=vect['year'], 
+                                       month=vect['month'], day=1))
+    vect = vect.set_index('time')
+    idx['time'] = pd.to_datetime(dict(year=idx['year'], 
+                                       month=idx['month'], day=1))
+    idx = idx.set_index('time')
+    if out == 'El Nino':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni >= 0.5')
+    elif out == 'La Nina':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni <= -0.5')
+    elif out == 'Neutral':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('-0.5 <= oni <= 0.5')
+    elif out =='NDJF':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+    else:
+        # do nothing
+        vect = vect
+    vect_da = xr.DataArray(vect['oni'], coords=[vect.index], dims=['time'])
+    idx_da = xr.Dataset(idx)
+    for col in idx.columns:
+        idx_da[col] = idx[col]
+    # Find the intersection of time periods
+    common_times = idx_da.time.to_index().intersection(vect_da.time.to_index())
+    # Align datasets to this common time range
+    idx_da = idx_da.sel(time=common_times)
+    return idx_da.to_pandas()
+
+
 def main():
     global isccp_anom, era5_data, pc_enso, nino_idx
     oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
@@ -400,7 +479,13 @@ def main():
                               to='era5_reanal/timeseries/isccp_comb.nc')
         isccp = cloud_types(isccp, cloud_dict)
         # Cloud overlap adjustment
-        isccp['sc_adj'] = isccp['stratus'] / (100 - isccp['high'])
+        isccp['sc_adj'] = 100 * isccp['stratus'] /\
+            (100 - isccp['high'] - isccp['mid'])
+        # Fix erroneous outliers
+        isccp['sc_adj'].data = np.where(isccp['sc_adj'].data < 0, 0,
+                                        isccp['sc_adj'].data)
+        isccp['sc_adj'].data = np.where(isccp['sc_adj'].data > 100, 0,
+                                        isccp['sc_adj'].data)
         isccp_anom = deseasonalize_isccp(isccp)
         isccp_anom.to_netcdf('era5_reanal/timeseries/isccp_anom.nc')
     
@@ -419,20 +504,25 @@ def main():
     pc_enso['PC_theta'] = -pc_700['PC1']
     
     pc_enso['oni'] = oni_rel['oni']
-    
+    # limit ourselves to warm or cool events
+    state = 'None'
+    era5_data = isolate_enso(era5_data, oni_idx, state)
+    isccp_anom = isolate_enso(isccp_anom, oni_idx, state)
+    pc_enso = isolate_enso_idx(pc_enso, oni_idx, state)
     # Correlations?
-    corr = share.calc_corr_vect(isccp_anom, 'stratus', pc_enso, 'C')
+    corr = share.calc_corr_vect(isccp_anom, 'sc_adj', pc_enso, 'C')
     share.plot_corr(corr, cbar_lab='R', lims=share.pac_domain, 
-              title='Correlation Between ISCCP Sc and C Mode')
+              title='Correlation Between ISCCP Sc and C Mode',
+              low='minimum')
     # Consistent! Let's see the low cloud anomaly
     lcc_anom = share.isolate_ep_isccp(isccp_anom, 'stratus')
     lcc_eq_anom = share.isolate_ep_isccp(isccp_anom, 'stratus', 
                                    share.eqp_domain_360)
     
-    share.plot_combined(pc_enso['C'], lcc_anom, isccp_anom.time, 
-                        'C', 'Isccp SC')
-    share.plot_combined(pc_enso['PC2'], lcc_eq_anom, isccp_anom.time, 
-                        'PC2', 'Isccp SC')
+    # share.plot_combined(pc_enso['C'], lcc_anom, isccp_anom.time, 
+    #                     'C', 'Isccp SC')
+    # share.plot_combined(pc_enso['PC2'], lcc_eq_anom, isccp_anom.time, 
+    #                     'PC2', 'Isccp SC')
     
     # Write EOF to file for later
     pc_enso.to_csv('misc_data/enso_pcs_isccp.csv', index=False)
@@ -441,13 +531,27 @@ def main():
         # sample call for big subplot
         data = [isccp_anom, isccp_anom, isccp_anom, era5_data]
         to_corr = [pc_enso, pc_enso, nino_idx]
-        vars1 = ['stratus', 'high', 'cldamt', 'sst']
+        vars1 = ['sc_adj', 'high', 'cldamt', 'sst']
         vars2 = ['E', 'C', '3.4_anom']
         types = ['E Index', 'C Index', 'Niño 3.4']
         titles = ['ISCCP Sc + St', 'ISCCP Cirrus', 
                   'ISCCP Total Cloud' , 'ERA5 SST']
         
-        share.plot_corr_subplot(data, to_corr, vars1, vars2, titles, types)
+        share.plot_corr_subplot(data, to_corr, vars1, vars2, titles, types,
+                                top=0.65, box=True)
+        
+    if True:
+        # call for ccf plot
+        data2 = [era5_data] * 5
+        to_corr2 = [pc_enso, pc_enso, nino_idx]
+        vars12 = ['eis', 'speed', 'w_700', 'rh_700', 'cold_adv_smooth']
+        vars2 = ['E', 'C', '3.4_anom']
+        types = ['E Index', 'C Index', 'Niño 3.4']
+        titles2 = ['ERA5 EIS', 'ERA5 10m WS', 'ERA5 ω$_{700}$',  
+                  'ERA5 RH$_{700}$' , 'ERA5 Cold Adv.']
+
+        share.plot_corr_subplot(data2, to_corr2, vars12, vars2, titles2, types,
+                                top=0.8)
         
 if __name__ == "__main__":
     main()

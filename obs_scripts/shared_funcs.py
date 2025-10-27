@@ -27,6 +27,8 @@ from matplotlib.colors import TwoSlopeNorm
 from shapely.geometry import Polygon
 from pyproj import Geod
 from scipy.ndimage import gaussian_filter
+from string import ascii_lowercase
+import matplotlib.patches as patches
 
 
 # Domains
@@ -297,7 +299,11 @@ def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     p_values.sort()
     # alphaFDR criteria - 2* the global significance
     a_FDR = 2 * (1 - sig)
-    p_FDR = max([p for n, p in enumerate(p_values) if p <= a_FDR * n / n_samples])
+    try:
+        p_FDR = max([p for n, p in enumerate(p_values) if p <= a_FDR * n / n_samples])
+    except ValueError:
+        # this happens if no points qualify
+        p_FDR = 0
     # Adjust sig_level for two-tailed test
     adjusted_sig = 1 - (p_FDR / 2)
     t_crit = t.ppf(adjusted_sig, df=len(xr_ds.time) - 2)
@@ -430,9 +436,9 @@ def plot_scalar_field(data, title='', lims=pac_domain, cbar_lab='',
     proj = ccrs.PlateCarree(central_longitude=180)
     # plt.subplots_adjust(left=0.05, right=0.95, top=0.9, bottom=0.1)
     # Ensure longitude wraps correctly if in 0-360 range
-    if era5.lon.max() > 180:
-        era5 = era5.assign_coords(lon=(((era5.lon + 180) % 360) - 180))
-        era5 = era5.sortby('lon')
+    # if era5.lon.max() > 180:
+    #     era5 = era5.assign_coords(lon=(((era5.lon + 180) % 360) - 180))
+    #     era5 = era5.sortby('lon')
 
     lon = era5.lon.values
     lat = era5.lat.values
@@ -482,7 +488,7 @@ def plot_scalar_field(data, title='', lims=pac_domain, cbar_lab='',
     
 def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
                         lims=pac_domain, cbar_lab=[],
-                        levels=[], to=''):
+                        levels=[], to='', top=0.7):
     """
     creates our 3*N subplot of various variables during CP EN, EP EN, and LN
     
@@ -502,14 +508,12 @@ def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
     fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
                         dpi=600, subplot_kw={'projection': proj},
                         figsize=(10, 12))  # or adjust as needed)
-    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.7, bottom=0.01)
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=top, bottom=0.01)
     # top=0.35
+    n = 0
     for row in range(num_rows):
         # =1 for 3 row subplot
-        if row < 2:
-            cmap = 'RdBu_r'
-        else:
-            cmap = 'PuOr_r'
+        cmap = 'RdBu_r'
         for col, phase in zip(range(num_cols), data[row].keys()):
             if phase == 'mix_nino':
                 #  Overwrite for now
@@ -517,10 +521,10 @@ def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
             var = names[row]
             curr_data = data[row][phase][var].fillna(0).copy()
             # Correction to 0-360
-            if curr_data.lon.max() > 180:
-                curr_data = curr_data.assign_coords(lon=(((curr_data.lon +\
-                                                           180) % 360) - 180))
-                curr_data = curr_data.sortby('lon')
+            # if curr_data.lon.max() > 180:
+            #     curr_data = curr_data.assign_coords(lon=(((curr_data.lon +\
+            #                                                180) % 360) - 180))
+            #     curr_data = curr_data.sortby('lon')
             # Get lat/lon axis
             lon = curr_data.lon.values
             lat = curr_data.lat.values
@@ -530,8 +534,10 @@ def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
             norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax) 
             # plot setup   
             axs[row, col].set_global()
-            axs[row, col].set_title(titles[row] + ' during ' + types[col],
+            axs[row, col].set_title(ascii_lowercase[n] + ') ' + 
+                                    titles[row] + ' during ' + types[col],
                                     fontsize='small', pad=5)
+            n += 1
             # pcolormesh plot
             pcm = axs[row, col].pcolormesh(lon2d, lat2d, curr_data,
                                            transform=ccrs.PlateCarree(), 
@@ -577,7 +583,7 @@ def plot_scalar_subplot(data=[], titles=[], types=[], names=[],
 
     
 def plot_corr(corr_field, title='', lims=pac_domain, cbar_lab='R',
-              shrink=0.65, levels=5):
+              shrink=0.65, levels=5, low='balanced'):
     """
     Contour plot of a scalar field (e.g., hcc) across the globe or a specified region.
     
@@ -608,7 +614,17 @@ def plot_corr(corr_field, title='', lims=pac_domain, cbar_lab='R',
     lon2d, lat2d = np.meshgrid(lon, lat)
     # Determine the color limits to center around zero
     vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
-    norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+    if vmin >= 0:
+        norm = TwoSlopeNorm(vmin=vmin,
+                            vcenter=(vmin+vmax)/2, vmax=vmax)
+        cmap = 'Reds'
+    elif vmax <= 0:
+        norm = TwoSlopeNorm(vmin=vmin,
+                            vcenter=(vmin+vmax)/2, vmax=vmax)
+        cmap = 'Blues_r'
+    else:
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+        cmap = 'RdBu_r'
     # Create plot
     fig, ax = plt.subplots(subplot_kw={'projection': proj}, figsize=(10, 5))
     ax.set_global()
@@ -616,7 +632,7 @@ def plot_corr(corr_field, title='', lims=pac_domain, cbar_lab='R',
     # masked_data = np.ma.masked_invalid(corr_field.data)
     # Use pcolormesh with centered color limits around zero
     pcm = ax.pcolormesh(lon2d, lat2d, corr_field.data, transform=ccrs.PlateCarree(),
-                        shading='auto', cmap='RdBu_r', norm=norm)
+                        shading='auto', cmap=cmap, norm=norm)
     pcm2 = ax.pcolormesh(lon2d, lat2d, nonsig.data, transform=ccrs.PlateCarree(),
                         shading='auto', cmap='Greys', alpha=0.1)
 
@@ -649,8 +665,9 @@ def plot_corr(corr_field, title='', lims=pac_domain, cbar_lab='R',
     plt.show()
 
 
-def plot_corr_subplot(data, to_corr, vars1, vars2,
-                      titles, types, lims=pac_domain, levels=5, to=''):
+def plot_corr_subplot(data, to_corr, vars1, vars2, 
+                      titles, types, lims=pac_domain, levels=5, 
+                      top=0.8, to='', low='balanced', box=False):
     """
     Plots a N data * N to_corr subplot correlating each array with a timeseries
     of entries. Plots the pearson correlation for each plot at 99% sig
@@ -668,12 +685,13 @@ def plot_corr_subplot(data, to_corr, vars1, vars2,
     fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
                         dpi=600, subplot_kw={'projection': proj},
                         figsize=(10, 9))  # or adjust as needed)
-    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.8, bottom=0.01)
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=top, bottom=0.01)
     # top=0.65
-    
+    n = 0
     for row in range(num_rows):
         for col, array in enumerate(to_corr):
-            corr = calc_corr_vect(data[row], vars1[row], to_corr[col], vars2[col])
+            corr = calc_corr_vect(data[row], vars1[row],
+                                  to_corr[col], vars2[col])
             corr_field = corr.fillna(0)
             # Wrapping for ERA5
             if corr_field.lon.max() > 180:
@@ -689,16 +707,37 @@ def plot_corr_subplot(data, to_corr, vars1, vars2,
             lon2d, lat2d = np.meshgrid(lon, lat)
             # Determine the color limits to center around zero
             vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
-            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+            if n == 1 and box == True:
+                rect2 = patches.Rectangle((240, -20), 40, 20, linewidth=1.5,
+                                         edgecolor='violet', fc='none',
+                                         label='Southeast Pacific', alpha=0.8,
+                                         transform=ccrs.PlateCarree(),
+                                         zorder=10)
+                axs[row, col].add_patch(rect2)
+            if vmin >= 0 and vmax > 0:
+                norm = TwoSlopeNorm(vmin=vmin,
+                                    vcenter=(vmin+vmax)/2, vmax=vmax)
+                cmap = 'Reds'
+            elif vmin < 0 and vmax <= 0:
+                norm = TwoSlopeNorm(vmin=vmin,
+                                    vcenter=(vmin+vmax)/2, vmax=vmax)
+                cmap = 'Blues_r'
+            elif vmin == vmax == 0:
+                continue
+            else:
+                norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+                cmap = 'RdBu_r'
             # Begin plotting
             axs[row, col].set_global()
-            axs[row, col].set_title(titles[row] + ' and ' + types[col],
+            axs[row, col].set_title(ascii_lowercase[n] + ') ' + titles[row] +\
+                                    ' and ' + types[col],
                                     fontsize='small')
+            n += 1
             # masked_data = np.ma.masked_invalid(corr_field.data)
             # Use pcolormesh with centered color limits around zero
             pcm = axs[row, col].pcolormesh(lon2d, lat2d, corr_field.data,
                                            transform=ccrs.PlateCarree(),
-                                shading='auto', cmap='RdBu_r', norm=norm)
+                                shading='auto', cmap=cmap, norm=norm)
             pcm2 = axs[row, col].pcolormesh(lon2d, lat2d, nonsig.data,
                                             transform=ccrs.PlateCarree(),
                                 shading='auto', cmap='Greys', alpha=0.1)

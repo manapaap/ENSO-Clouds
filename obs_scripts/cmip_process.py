@@ -15,6 +15,7 @@ import os
 import pandas as pd
 from matplotlib.colors import TwoSlopeNorm
 from scipy.signal import detrend
+from string import ascii_lowercase
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
 import obs_scripts.shared_funcs as share
@@ -81,17 +82,25 @@ def combine_files(folder='CMIP6/NOAA-GFDL/cllcalipso/', isccp=False):
     return output
 
 
-def isccp_to_sc(data):
+def isccp_to_sc(data, adjust=True):
     """
     Processes the clisccp variable in climate model output to isolate
     stratus and stratocumulus clouds and returns a smaller dataarray
     containing just that variable
     """
-    data = data.sel({'plev': slice(1000 * 100, 680 * 100),
-                           'tau': slice(3.6, 360)}).sum(dim=["tau", "plev"])
-    data = keep_vars_coords(data, ['clisccp'], ['lat', 'lon', 'time'])
+    data_low = data.sel({'plev': slice(1000 * 100, 680 * 100),
+                          'tau': slice(3.6, 360)}).sum(dim=["tau", "plev"])
+    if adjust:
+        data_mid = data.sel({'plev': slice(680 * 100, 440 * 100),
+                              'tau': slice(0, 360)}).sum(dim=["tau", "plev"])
+        data_high = data.sel({'plev': slice(440 * 100, 50 * 100),
+                              'tau': slice(0, 23)}).sum(dim=["tau", "plev"])
+        # Random overlap correction
+        data_low['clisccp'] = 100 * data_low['clisccp'] /\
+            (100 - data_high['clisccp'] - data_mid['clisccp'])
+    data_low = keep_vars_coords(data_low, ['clisccp'], ['lat', 'lon', 'time'])
     
-    return data
+    return data_low
 
 
 def deseasonalize(data):
@@ -127,7 +136,7 @@ def calc_nino_anom(data, rem_trend=True):
 
 
 def plot_gcm_corr_subplot(data, to_corr, var, titles, types, name='Sc + St',
-                          vars2 = ['E', 'C', 'nino_3.4'], fsize=(9, 12),
+                          vars2 = ['E', 'C', 'nino_3.4'], fsize=(9, 12), top=0.95,
                           lims=share.pac_domain, levels=5, to='', cmap='RdBu_r'):
     """
     Plots a N data * N to_corr subplot correlating each array with a timeseries
@@ -151,9 +160,10 @@ def plot_gcm_corr_subplot(data, to_corr, var, titles, types, name='Sc + St',
     fig, axs = plt.subplots(num_rows, num_cols, sharex=True, sharey=True, 
                         dpi=600, subplot_kw={'projection': proj},
                         figsize=fsize)  # or adjust as needed)
-    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.95, bottom=0.01)
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=top, bottom=0.01)
     # top=0.65
-    
+    i = 0
+    letters = ascii_lowercase + 'α'
     for row in range(num_rows):
         corr_rel = to_corr[row]
         for col in range(num_cols):
@@ -176,9 +186,11 @@ def plot_gcm_corr_subplot(data, to_corr, var, titles, types, name='Sc + St',
             norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
             # Begin plotting
             axs[row, col].set_global()
-            axs[row, col].set_title(titles[row] + ' ' + name + ' and ' +\
+            axs[row, col].set_title(letters[i] + ') ' + 
+                                    titles[row] + ' ' + name + ' and ' +\
                                     types[col],
                                     fontsize='small')
+            i += 1
             # masked_data = np.ma.masked_invalid(corr_field.data)
             # Use pcolormesh with centered color limits around zero
             pcm = axs[row, col].pcolormesh(lon2d, lat2d, corr_field.data,
@@ -424,15 +436,7 @@ def main():
     cnrm_eof = share.rotate_enso_eof(cnrm_eof)
     cnrm_eof['nino_3.4'] = calc_nino_anom(cnrm_sst)
     
-    
-    
-    # Steps:
-    # Combine files for my sanity
-    # restrict to ISCCP period
-    # remove annual cycle
-    # calculate SST PCs and rotate
     # 
-    global data3, data2, to_corr
     if True:
         # data = [gfdl_cll, e3sm_cll, ipsl_cll, 
         #         cesm_cll, canesm_cll, mri_cll]
@@ -449,16 +453,18 @@ def main():
         types = ['E Index', 'C Index', 'Niño 3.4']
         
         plot_gcm_corr_subplot(data3, to_corr, 'clisccp', titles, types,
-                              name='Sc + St', cmap='PRGn_r')
+                              name='Sc + St', top=0.95)
+        plot_gcm_corr_subplot(data2, to_corr, 'tos', titles, types,
+                              name='SST', top=0.95)
         
-    
+    global data_small, to_corr2
     var = 'clisccp'
     types = ['E Index', 'C Index', 'Niño 3.4']
     data_small = [cesm_sc, ipsl_sc, miroc_sc]
-    to_corr = [cesm_eof, ipsl_eof, miroc_eof]
+    to_corr2 = [cesm_eof, ipsl_eof, miroc_eof]
     titles = ['NCAR-CESM2', 'IPSL-CM6A', 'MIROC6']
-    plot_gcm_corr_subplot(data_small, to_corr, var, titles, types, cmap='PRGn_r',
-                          fsize=(9, 4), name='Sc + St')
+    plot_gcm_corr_subplot(data_small, to_corr2, var, titles, types, cmap='PRGn_r',
+                          fsize=(9, 4), name='Sc + St', top=0.95)
     
 if __name__ == '__main__':
     main()

@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from scipy.stats import linregress
 
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
@@ -65,7 +67,7 @@ def pred_pc(data_df, preds):
     return info
         
     
-def pred_var(data_df, pred_dfs=[], names=[], normalize=False):
+def pred_var(data_df, pred_dfs=[], names=[], normalize=True):
     """
     Constructs linear regression of region-dependent predictors, marking coefficients 
     with * if not significant at 99% confidence (p >= 0.01).
@@ -95,6 +97,25 @@ def pred_var(data_df, pred_dfs=[], names=[], normalize=False):
         info = pd.concat([info, params_df])
 
     return info
+
+
+def vif_calc(data_df, pred_dfs=[], names=[], normalize=True):
+    """
+    Constructs linear regression of region-dependent predictors, marking coefficients 
+    with * if not significant at 99% confidence (p >= 0.01).
+    """
+    info = pd.DataFrame()
+    for loc in data_df.columns:
+        X = pd.DataFrame({name: df[loc] for name, df in zip(names, pred_dfs)})
+        if normalize:
+            X /= X.std()  # Normalize predictors
+        X = sm.add_constant(X)  # Add intercept term
+        vifs = {var: variance_inflation_factor(X.values, i) 
+               for i, var in zip(range(X.shape[1]), X.columns)}
+        # Append to results
+        params_df = pd.DataFrame(vifs, index=[loc])
+        info = pd.concat([info, params_df])
+    return info
     
 
 def pearson(data_df, pred_dfs, names):
@@ -115,11 +136,139 @@ def pearson(data_df, pred_dfs, names):
                 denom[col]
         info.loc[loc] = pearson
     return info
-        
+
+
+def pred_predictors(pc_enso, pred_vars):
+    """
+    Returns a pandas df containing the slope and intercept of the 
+    predictor variables vs. the C-index over the whole SEP
+    """
+    data = pd.DataFrame(columns=pred_vars.columns,
+                        index=['slope', 'intercept', 
+                               'rvalue', 'pvalue'])
+    # Normalize
+    pred_vars /= pred_vars.std()
+    for var in pred_vars.columns:
+        reg = linregress(pc_enso['C'], pred_vars[var])
+        data.loc['slope', var] = reg.slope
+        data.loc['intercept', var] = reg.intercept
+        data.loc['rvalue', var] = reg.rvalue
+        data.loc['pvalue', var] = reg.pvalue
+    return data
+
+
+def project_ccfs(pc_enso, ccf_corr, predictors):
+    """
+    REturns the projection of the predictors onto the C-index
+    
+    only retain significant predictors
+    """
+    projected = pd.DataFrame(columns=predictors.columns)
+    for var in projected:
+        if ccf_corr[var].pvalue > 0.01:
+            # This is only EIS
+            projected.drop(var, axis=1, inplace=True)
+        else:
+            projected[var] = ccf_corr[var].slope * pc_enso['C'] +\
+                    ccf_corr[var].intercept
+    return projected        
+
+
+def fit_cloud_data(lcc_anoms, predictors):
+    """
+    Normalizes data and fits to the cloud cover variable, only for one region 
+    (SEP)
+    """
+    X = predictors / predictors.std()
+    X = sm.add_constant(X)
+    Y = lcc_anoms / lcc_anoms.std()
+    fit = sm.OLS(Y, X).fit()
+    return fit
+
+
+def isolate_enso(xr_ds, oni_idx, out='El Nino'):
+    """
+    Isolates El Nino or La Nina months from xr_ds based on ONI criteria
+    """
+    vect = oni_idx.copy()
+    # Convert the vector data to a time-indexed DataArray
+    vect['time'] = pd.to_datetime(dict(year=vect['year'], 
+                                       month=vect['month'], day=1))
+    vect = vect.set_index('time')
+    
+    if out == 'El Nino':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni >= 0.5')
+    elif out == 'La Nina':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni <= -0.5')
+    elif out == 'Neutral':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('-0.5 <= oni <= 0.5')
+    elif out =='NDJF':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+    else:
+        # do nothing
+        vect = vect
+    vect_da = xr.DataArray(vect['oni'], coords=[vect.index], dims=['time'])
+    # Find the intersection of time periods
+    common_times = xr_ds.time.to_index().intersection(vect_da.time.to_index())
+    # Align datasets to this common time range
+    xr_ds = xr_ds.sel(time=common_times)
+    vect_da = vect_da.sel(time=common_times)
+    return xr_ds
+
+
+def isolate_enso_idx(pc_enso, oni_idx, out='El Nino'):
+    """
+    Isolates El Nino or La Nina months from xr_ds based on ONI criteria
+    """
+    vect = oni_idx.copy()
+    idx = pc_enso.copy()
+    # Convert the vector data to a time-indexed DataArray
+    vect['time'] = pd.to_datetime(dict(year=vect['year'], 
+                                       month=vect['month'], day=1))
+    vect = vect.set_index('time')
+    idx['time'] = pd.to_datetime(dict(year=idx['year'], 
+                                       month=idx['month'], day=1))
+    idx = idx.set_index('time')
+    if out == 'El Nino':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni >= 0.5')
+    elif out == 'La Nina':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('oni <= -0.5')
+    elif out == 'Neutral':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+        vect = vect.query('-0.5 <= oni <= 0.5')
+    elif out =='NDJF':
+        vect['month'] = pd.Series(vect.month, dtype=int)
+        vect = vect.query('month <= 2 or month >= 11')
+    else:
+        # do nothing
+        vect = vect
+    vect_da = xr.DataArray(vect['oni'], coords=[vect.index], dims=['time'])
+    idx_da = xr.Dataset(idx)
+    for col in idx.columns:
+        idx_da[col] = idx[col]
+    # Find the intersection of time periods
+    common_times = idx_da.time.to_index().intersection(vect_da.time.to_index())
+    # Align datasets to this common time range
+    idx_da = idx_da.sel(time=common_times)
+    return idx_da.to_pandas()
+
 
 def main():
     # Files of intrest- ISCCP and ERA5
-    global era5_isc, isccp_anom, era5_data, pc_enso, pc_1983
+    global pc_1983, pred_vars, ccf_corr, sep_projected, fit1, fit2, lcc_anoms
+    global sep_predictors, oni_idx, isccp_anom, era5_data, best, ccf_pred
     isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
        
@@ -130,15 +279,19 @@ def main():
         print('Files missing; please run vis_clouds and all_cloud_corr')
     # Overlap period with ISCCP
     era5_isc = era5_data.sel({'time': isccp_anom.time})
-    # PCs for different time periods; get sign convention we want
-    _, pc_enso = share.calc_eof(era5_data, 'sst', n_pc=2,
-                             plot=False, region='equator', detrend=True)
-    pc_enso['PC1'] *= -1
-    pc_enso = share.rotate_enso_eof(pc_enso)
+    # PCs for different time periods; get sign convention
     _, pc_1983 = share.calc_eof(era5_isc, 'sst', n_pc=2,
                              plot=False, region='equator', detrend=True)
     pc_1983['PC1'] *= -1
     pc_1983 = share.rotate_enso_eof(pc_1983)
+    # load ONI
+    oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
+    oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
+    # limit ourselves to warm or cool events
+    state = 'El Nino'
+    era5_isc = isolate_enso(era5_isc, oni_idx, state)
+    isccp_anom = isolate_enso(isccp_anom, oni_idx, state)
+    pc_1983 = isolate_enso_idx(pc_1983, oni_idx, state)
     # regions of intrest; too much to include in shared funcs for now
     regions = {'NEQP': [0, 10, 240, 280],
                'SEQP': [-10, 0, 240, 280],
@@ -147,19 +300,14 @@ def main():
                'SEP': [-20, 0, 240, 280]}
     
     # Get anomalies we care about
-    lp = True
+    lp = False
     lcc_anoms = isolate_regions(isccp_anom, 'sc_adj', regions, 'ISCCP',
                                 lowpass=lp)
     eis_anoms = isolate_regions(era5_isc, 'eis', regions, 'ERA5',
                                 lowpass=lp)
     
-    # Predictors
-    # sst_anoms = isolate_regions(era5_data, 'sst', regions, 'ERA5')
     sst_1983 = isolate_regions(era5_isc, 'sst', regions, 'ERA5',
                                lowpass=lp)
-    # theta_anoms = isolate_regions(era5_data, 'theta_700', regions, 'ERA5')
-    # theta_1983 = isolate_regions(era5_isc, 'theta_700', regions, 'ERA5')
-    # Extended list of predictors
     speed_anoms = isolate_regions(era5_isc, 'speed', regions, 'ERA5',
                                   lowpass=lp)
     rh_700_anoms = isolate_regions(era5_isc, 'rh_700', regions, 'ERA5',
@@ -169,32 +317,39 @@ def main():
     
     cold_adv_anoms = isolate_regions(era5_isc, 'cold_adv', regions, 'ERA5',
                                      lowpass=lp)
-    # Variables we care for
-    lcc_pred = pred_pc(lcc_anoms, pc_1983[['PC1', 'PC2']])
-    # eis_pred = pred_pc(eis_anoms, pc_enso[['PC1', 'PC2']])
-    # Cause of cloud anomalies
-    # sst_pred = pred_pc(sst_anoms, pc_enso[['PC1', 'PC2']])
-    # theta_pred = pred_pc(theta_anoms, pc_enso[['PC1', 'PC2']])
-    # Validation check
-    #eis_cause = pred_var(eis_anoms, pred_dfs=[sst_anoms, theta_anoms],
-    #                     names=['SST', 'Theta 700'])
-    #lcc_cause = pred_var(lcc_anoms, pred_dfs=[sst_1983, theta_1983],
-    #                     names=['SST', 'Theta 700'])
-    # extended lcc check
-    
+
     cirr_anoms = isolate_regions(isccp_anom, 'high', regions, 'ISCCP',
                                 lowpass=lp)
     
-    lcc_causes = pred_var(lcc_anoms, pred_dfs=[sst_1983, eis_anoms,
-                                               rh_700_anoms, cirr_anoms,
-                                               cold_adv_anoms, speed_anoms,
-                                               w_700_anoms],
-                         names=['SST', 'EIS',
-                                '700 hPa Relative Humidity', 'Cirrus Fraction',
-                                'Cold Advection', '10m Windspeed',
-                                '700 hPa Subsidence'], normalize=True)
+    pred_vars = [sst_1983, eis_anoms, rh_700_anoms, cirr_anoms,
+                 cold_adv_anoms, speed_anoms, w_700_anoms]
+    names = ['SST', 'EIS', '700 hPa Relative Humidity', 'Cirrus Fraction',
+           'Cold Advection', '10m Windspeed', '700 hPa Subsidence']
+    sep_predictors = pd.DataFrame({name: var['SEP'] for name, var in
+                                   zip(names, pred_vars)}) 
+    # include for completeness
+    vifs = {var: variance_inflation_factor(sep_predictors.values, i) 
+           for i, var in zip(range(sep_predictors.shape[1]), sep_predictors.columns)}
     
+    lcc_causes = pred_var(lcc_anoms, pred_dfs= pred_vars,
+                         names=names, normalize=True)
+    vifs = vif_calc(lcc_anoms, pred_dfs=pred_vars,
+                         names=names, normalize=True).T['SEP']
+    
+    ccf_corr = pred_predictors(pc_1983, sep_predictors).T
+    # these are the variables that the C index drives
+    ccf_pred = ccf_corr['slope'][ccf_corr['pvalue'] <= 0.01]
+    
+    # sep_projected = project_ccfs(pc_1983, ccf_corr, sep_predictors)
+    
+    # We can now compare models for predicting the lcc anomaly
+    # this is the relationship betwen the CCFs and LCC
+    fit1 = fit_cloud_data(lcc_anoms['SEP'], sep_predictors)
+    # fit2 = fit_cloud_data(lcc_anoms['SEP'], sep_projected)
     # EIS not good in SEP???
+    good_fit = fit1.params[fit1.pvalues <= 0.01]
+    
+    best = ccf_pred * good_fit
 if __name__ == '__main__':
     main()
     
