@@ -17,7 +17,8 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from scipy.stats import linregress
+from scipy.stats import linregress, t
+from scipy.signal import detrend
 
 
 os.chdir('C:/Users/aakas/Documents/ENSO-Clouds/')
@@ -153,36 +154,39 @@ def pred_predictors(pc_enso, pred_vars):
         data.loc['slope', var] = reg.slope
         data.loc['intercept', var] = reg.intercept
         data.loc['rvalue', var] = reg.rvalue
-        data.loc['pvalue', var] = reg.pvalue
+        # data.loc['pvalue', var] = reg.pvalue
+        # adjust degrees of freedom 
+        df = len(pc_enso) - 2
+        cleaned_idx = pc_enso['C'] - np.mean(pc_enso['C'])
+        idx_autocorr = (cleaned_idx[1:] * cleaned_idx[:-1]).mean() /\
+            np.var(cleaned_idx)
+        cleaned_data = pred_vars[var] - np.mean(pred_vars[var])
+        data_autocorr = (cleaned_data[1:] * cleaned_data[:-1]).mean() /\
+            np.var(cleaned_data)
+        df_adjusted = df * ((1 - idx_autocorr * data_autocorr) /\
+                            (1 + idx_autocorr * data_autocorr))
+        df_adjusted = df
+        rvalues = reg.rvalue.astype(float)
+        t_stat = rvalues * np.sqrt(df_adjusted / (1 - rvalues**2))
+        pvalues = 2 * t.sf(abs(t_stat), df_adjusted)
+        data.loc['pvalue', var] = pvalues
     return data
-
-
-def project_ccfs(pc_enso, ccf_corr, predictors):
-    """
-    REturns the projection of the predictors onto the C-index
-    
-    only retain significant predictors
-    """
-    projected = pd.DataFrame(columns=predictors.columns)
-    for var in projected:
-        if ccf_corr[var].pvalue > 0.01:
-            # This is only EIS
-            projected.drop(var, axis=1, inplace=True)
-        else:
-            projected[var] = ccf_corr[var].slope * pc_enso['C'] +\
-                    ccf_corr[var].intercept
-    return projected        
 
 
 def fit_cloud_data(lcc_anoms, predictors):
     """
     Normalizes data and fits to the cloud cover variable, only for one region 
     (SEP)
+    
+    Adjusts degrees of freedom via the VIF criteria in Wilks 2011
     """
-    X = predictors / predictors.std()
+    X = (predictors - predictors.mean()) / predictors.std()
     X = sm.add_constant(X)
-    Y = lcc_anoms / lcc_anoms.std()
+    Y = (lcc_anoms - lcc_anoms.mean()) / lcc_anoms.std()
     fit = sm.OLS(Y, X).fit()
+    # adjust pvalues for degrees of freedom
+    residuals = Y - fit1.predict()
+    autocorr = (residuals[1:] * residuals[:-1]) / np.var(residuals)
     return fit
 
 
@@ -288,7 +292,7 @@ def main():
     oni_idx = share.load_oni_idx(fpath='misc_data/oni_index.txt')
     oni_rel = oni_idx.query('"1983-07" <= time <= "2017-06"').reset_index(drop=True)
     # limit ourselves to warm or cool events
-    state = 'El Nino'
+    state = 'None'
     era5_isc = isolate_enso(era5_isc, oni_idx, state)
     isccp_anom = isolate_enso(isccp_anom, oni_idx, state)
     pc_1983 = isolate_enso_idx(pc_1983, oni_idx, state)
@@ -327,6 +331,9 @@ def main():
            'Cold Advection', '10m Windspeed', '700 hPa Subsidence']
     sep_predictors = pd.DataFrame({name: var['SEP'] for name, var in
                                    zip(names, pred_vars)}) 
+    # detrend these
+    # for predictor in sep_predictors.columns:
+    #     sep_predictors[predictor] = detrend(sep_predictors[predictor])
     # include for completeness
     vifs = {var: variance_inflation_factor(sep_predictors.values, i) 
            for i, var in zip(range(sep_predictors.shape[1]), sep_predictors.columns)}
@@ -340,12 +347,9 @@ def main():
     # these are the variables that the C index drives
     ccf_pred = ccf_corr['slope'][ccf_corr['pvalue'] <= 0.01]
     
-    # sep_projected = project_ccfs(pc_1983, ccf_corr, sep_predictors)
-    
     # We can now compare models for predicting the lcc anomaly
     # this is the relationship betwen the CCFs and LCC
     fit1 = fit_cloud_data(lcc_anoms['SEP'], sep_predictors)
-    # fit2 = fit_cloud_data(lcc_anoms['SEP'], sep_projected)
     # EIS not good in SEP???
     good_fit = fit1.params[fit1.pvalues <= 0.01]
     

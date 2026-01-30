@@ -263,13 +263,16 @@ def calc_corr_field(xr_ds, var1='sst', var2='hcc', sig=0.99, mode='corr'):
     return sig_corr
 
 
-def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
+def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.95, mode='corr'):
     """
     Calculates the correlation between a field and a vector (e.g., Nino 3.4).
     if slope, var1 = slope * var2
     
     updated to calculate statistical significance via the FDR method in 
     Wilks 2016 (AMS)
+    
+    updated to include degrees of freedom correction via ESS method from
+    Bretherton 1999 (AMS)
     """
     # Convert the vector data to a time-indexed DataArray
     vect['time'] = pd.to_datetime(dict(year=vect['year'], month=vect['month'], day=1))
@@ -289,13 +292,27 @@ def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
     # Calculate covariance and correlation
     mean_term = (mean_diff_var1 * mean_diff_vect).mean(dim='time')
     corr = mean_term / (std_1 * std_2)
+    # calculate 1-lag autocorrelation terms
+    vect_autocorr = (mean_diff_vect.data[1:] * mean_diff_vect.data[:-1]).\
+        mean()
+    vect_autocorr /= std_2**2
+    df_autocorr = (mean_diff_var1.data[1:, :, :] *\
+                   mean_diff_var1.data[:-1, :, :]).mean(axis=0)
+    df_autocorr /= std_1**2
+    # adjust degrees of freedom
+    df = len(xr_ds.time) - 2
+    adjust_term = (1 - vect_autocorr * df_autocorr) /\
+        (1 + vect_autocorr * df_autocorr)
+    df_adjusted = df * adjust_term
     # Add significance check
-    t_stat = corr * np.sqrt((len(xr_ds.time) - 2) / (1 - corr**2))
+    t_stat = corr * np.sqrt(df_adjusted / (1 - corr**2))
     # isolate t-values and get corresponding p-values
     t_ordered = t_stat.data.reshape(-1)
+    df_ordered = df_adjusted.data.reshape(-1)
     t_ordered = t_ordered[~np.isnan(t_ordered)]
+    df_ordered = df_ordered[~np.isnan(df_ordered)]
     n_samples = t_ordered.size
-    p_values = t.pdf(t_ordered, df=len(xr_ds.time) - 2)
+    p_values = t.pdf(t_ordered, df=df_ordered)
     p_values.sort()
     # alphaFDR criteria - 2* the global significance
     a_FDR = 2 * (1 - sig)
@@ -306,7 +323,7 @@ def calc_corr_vect(xr_ds, var1, vect, var2='3.4_anom', sig=0.99, mode='corr'):
         p_FDR = 0
     # Adjust sig_level for two-tailed test
     adjusted_sig = 1 - (p_FDR / 2)
-    t_crit = t.ppf(adjusted_sig, df=len(xr_ds.time) - 2)
+    t_crit = t.ppf(adjusted_sig, df=df_adjusted)
     # Mask insignificant values
     sig_corr = corr.where(np.abs(t_stat) > t_crit)
     if mode == 'slope':

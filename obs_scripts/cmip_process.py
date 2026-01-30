@@ -183,7 +183,17 @@ def plot_gcm_corr_subplot(data, to_corr, var, titles, types, name='Sc + St',
             lon2d, lat2d = np.meshgrid(lon, lat)
             # Determine the color limits to center around zero
             vmin, vmax = np.percentile(corr_field.values, [0.1, 99.9])  # Robust scaling
-            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+            if vmin >= 0:
+                norm = TwoSlopeNorm(vmin=vmin,
+                                    vcenter=(vmin+vmax)/2, vmax=vmax)
+                cmap = 'Reds'
+            elif vmax <= 0:
+                norm = TwoSlopeNorm(vmin=vmin,
+                                    vcenter=(vmin+vmax)/2, vmax=vmax)
+                cmap = 'Blues_r'
+            else:
+                norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+                cmap = 'RdBu_r'
             # Begin plotting
             axs[row, col].set_global()
             axs[row, col].set_title(letters[i] + ') ' + 
@@ -465,6 +475,14 @@ def main():
     titles = ['NCAR-CESM2', 'IPSL-CM6A', 'MIROC6']
     plot_gcm_corr_subplot(data_small, to_corr2, var, titles, types, cmap='PRGn_r',
                           fsize=(9, 4), name='Sc + St', top=0.95)
+    # saving correlations for plot
+    corrs = []
+    for data, index in zip(data_small, to_corr2):
+        corr = share.calc_corr_vect(data, 'clisccp', index, 'C')
+        corrs.append(corr)
+    # corrs[0].to_netcdf('misc_data/correlations/cesm_hist.nc')
+    # corrs[1].to_netcdf('misc_data/correlations/ipsl_hist.nc')
+    # corrs[2].to_netcdf('misc_data/correlations/miroc_hist.nc')
     
 if __name__ == '__main__':
     main()
