@@ -329,6 +329,14 @@ def main():
     east_events = [4, 15, 33]
     other_events = [9]
     
+    # select certain composite variables to be used in the CCF
+    # attribution analysis
+    era5_states['cp_nino'][['eis', 'rh_700', 'cold_adv',
+                            'sst', 'w_700', 'sst', 'speed']].\
+        to_netcdf('misc_data/composites/era5.nc')
+    isccp_states['cp_nino'][['high', 'sc_adj']].\
+        to_netcdf('misc_data/composites/cirrus.nc')
+    
     
 if __name__ == '__main__':
     main()

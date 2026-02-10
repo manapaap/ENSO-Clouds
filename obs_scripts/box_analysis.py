@@ -158,36 +158,64 @@ def pred_predictors(pc_enso, pred_vars):
         # adjust degrees of freedom 
         df = len(pc_enso) - 2
         cleaned_idx = pc_enso['C'] - np.mean(pc_enso['C'])
-        idx_autocorr = (cleaned_idx[1:] * cleaned_idx[:-1]).mean() /\
-            np.var(cleaned_idx)
+        idx_autocorr = np.corrcoef(cleaned_idx[1:], cleaned_idx[:-1])[0, 1]
         cleaned_data = pred_vars[var] - np.mean(pred_vars[var])
-        data_autocorr = (cleaned_data[1:] * cleaned_data[:-1]).mean() /\
-            np.var(cleaned_data)
+        data_autocorr = np.corrcoef(cleaned_data[1:], cleaned_data[:-1])[0, 1]
         df_adjusted = df * ((1 - idx_autocorr * data_autocorr) /\
                             (1 + idx_autocorr * data_autocorr))
-        df_adjusted = df
+        # df_adjusted = df
         rvalues = reg.rvalue.astype(float)
         t_stat = rvalues * np.sqrt(df_adjusted / (1 - rvalues**2))
         pvalues = 2 * t.sf(abs(t_stat), df_adjusted)
         data.loc['pvalue', var] = pvalues
+        data.loc['df_adj'] = df_adjusted
     return data
 
 
-def fit_cloud_data(lcc_anoms, predictors):
+def fit_cloud_data(lcc_anoms, predictors, normalize=True):
     """
-    Normalizes data and fits to the cloud cover variable, only for one region 
-    (SEP)
+    Normalizes data and fits multiple regression to cloud anomalies.
     
-    Adjusts degrees of freedom via the VIF criteria in Wilks 2011
+    Uncertainty is adjusted following the effective sample size
+    approach used in JCLI (Bretherton-style temporal correction).
     """
-    X = (predictors - predictors.mean()) / predictors.std()
-    X = sm.add_constant(X)
-    Y = (lcc_anoms - lcc_anoms.mean()) / lcc_anoms.std()
+    if normalize:
+        # --- normalize ---
+        X = (predictors - predictors.mean()) / predictors.std()
+        X = sm.add_constant(X)
+    
+        Y = (lcc_anoms - lcc_anoms.mean()) / lcc_anoms.std()
+    else:
+        X = predictors
+        X = sm.add_constant(X)
+        Y = lcc_anoms
+    # --- fit OLS ---
     fit = sm.OLS(Y, X).fit()
-    # adjust pvalues for degrees of freedom
-    residuals = Y - fit1.predict()
-    autocorr = (residuals[1:] * residuals[:-1]) / np.var(residuals)
-    return fit
+    # --- effective sample size (predictand only) ---
+    y = np.array(Y)
+    rt = np.corrcoef(y[1:], y[:-1])[0, 1]
+    # --- adjusted degrees of freedom ---
+    n_params = X.shape[1]          # includes intercept
+    N_nom = len(y)
+    N_nom -= n_params
+    df_eff = N_nom * (1 - rt) / (1 + rt)
+    df_eff = max(df_eff, 1)         # safety
+    # --- adjusted standard errors ---
+    C = fit.cov_params()
+    se_adj = np.sqrt(np.diag(C)) * np.sqrt(N_nom / df_eff)
+    # --- adjusted t- and p-values ---
+    t_adj = fit.params / se_adj
+    p_adj = 2 * t.sf(np.abs(t_adj), df_eff)
+    # change error to a 0.95 CI
+    error = se_adj * t.ppf(1 - (1 - 0.95)/ 2, df_eff)
+
+    return pd.DataFrame({
+            "params": fit.params,
+            "se_adj": se_adj,
+            "t_adj": t_adj,
+            "p_adj": p_adj,
+            "df_eff": df_eff,
+            'error': error}), fit
 
 
 def isolate_enso(xr_ds, oni_idx, out='El Nino'):
@@ -271,8 +299,8 @@ def isolate_enso_idx(pc_enso, oni_idx, out='El Nino'):
 
 def main():
     # Files of intrest- ISCCP and ERA5
-    global pc_1983, pred_vars, ccf_corr, sep_projected, fit1, fit2, lcc_anoms
-    global sep_predictors, oni_idx, isccp_anom, era5_data, best, ccf_pred
+    global pc_1983, pred_vars, ccf_corr, fit1, fit2, lcc_anoms, raw_pred
+    global sep_predictors, lcc, isccp_anom, era5_data, best, ccf_pred
     isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
        
@@ -331,12 +359,17 @@ def main():
            'Cold Advection', '10m Windspeed', '700 hPa Subsidence']
     sep_predictors = pd.DataFrame({name: var['SEP'] for name, var in
                                    zip(names, pred_vars)}) 
+    raw_pred = sep_predictors.copy()
+    # save these timeseries
+    raw_pred['lcc_SEP'] = lcc_anoms['SEP']
+    raw_pred.to_csv('misc_data/ccf_timeseries.csv')
     # detrend these
     # for predictor in sep_predictors.columns:
     #     sep_predictors[predictor] = detrend(sep_predictors[predictor])
     # include for completeness
     vifs = {var: variance_inflation_factor(sep_predictors.values, i) 
-           for i, var in zip(range(sep_predictors.shape[1]), sep_predictors.columns)}
+           for i, var in zip(range(sep_predictors.shape[1]), 
+                             sep_predictors.columns)}
     
     lcc_causes = pred_var(lcc_anoms, pred_dfs= pred_vars,
                          names=names, normalize=True)
@@ -345,13 +378,21 @@ def main():
     
     ccf_corr = pred_predictors(pc_1983, sep_predictors).T
     # these are the variables that the C index drives
-    ccf_pred = ccf_corr['slope'][ccf_corr['pvalue'] <= 0.01]
+    ccf_pred = ccf_corr['slope'][ccf_corr['pvalue'] <= 0.05]
     
     # We can now compare models for predicting the lcc anomaly
     # this is the relationship betwen the CCFs and LCC
-    fit1 = fit_cloud_data(lcc_anoms['SEP'], sep_predictors)
+    lcc = raw_pred['lcc_SEP'].copy()
+    raw_pred.drop('lcc_SEP', axis=1, inplace=True)
+    #raw_pred = raw_pred[['EIS', 'Cirrus Fraction', 
+    #                     'Cold Advection', '700 hPa Relative Humidity']]
+    fit2, _ = fit_cloud_data(lcc, raw_pred,
+                                   normalize=False)
+    fit2.to_csv('misc_data/ccf_slopes.csv')
+    fit1, ols_fit = fit_cloud_data(lcc_anoms['SEP'], sep_predictors)
+    
     # EIS not good in SEP???
-    good_fit = fit1.params[fit1.pvalues <= 0.01]
+    good_fit = fit1.params[fit1.p_adj <= 0.05]
     
     best = ccf_pred * good_fit
 if __name__ == '__main__':

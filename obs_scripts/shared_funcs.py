@@ -463,7 +463,17 @@ def plot_scalar_field(data, title='', lims=pac_domain, cbar_lab='',
 
     # Improved color normalization
     vmin, vmax = np.percentile(era5.values, [0.5, 99.5])  # Robust scaling
-    norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)  
+    if vmin >= 0:
+        norm = TwoSlopeNorm(vmin=vmin,
+                            vcenter=(vmin+vmax)/2, vmax=vmax)
+        cmap = 'Reds'
+    elif vmax <= 0:
+        norm = TwoSlopeNorm(vmin=vmin,
+                            vcenter=(vmin+vmax)/2, vmax=vmax)
+        cmap = 'Blues_r'
+    else:
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+        cmap = 'RdBu_r'
 
     fig, ax = plt.subplots(figsize=(10, 5), dpi=600,
                                      subplot_kw={'projection': proj})
@@ -472,7 +482,7 @@ def plot_scalar_field(data, title='', lims=pac_domain, cbar_lab='',
 
     # pcolormesh plot
     pcm = ax.pcolormesh(lon2d, lat2d, era5, transform=ccrs.PlateCarree(), 
-                        shading='nearest', cmap='RdBu_r', norm=norm)
+                        shading='nearest', cmap=cmap, norm=norm)
 
     # Contour overlay
     levels = np.linspace(vmin, vmax, levels)  # Define contour levels
@@ -915,7 +925,7 @@ def calc_eof(era5_anom, var, n_pc=1, plot=False, norm=True, region='all',
 
     
 def plot_combined(series1, series2, time_axis, name1, name2, dt='months', 
-                  title='', sig=0.99, norm=True, cutoff=12):
+                  title='', sig=0.95, norm=True, cutoff=12):
     """
     Creates a set of subplots with time series, 1D correlation, and lag plots.
     
@@ -1246,7 +1256,7 @@ def plot_csd(arr1, arr2, nperseg=256, period=1, nfft=512, unit='months',
     plt.show()
     
     
-def isolate_ep_era5(era5_data, var='lcc', domain=ep_domain_360):
+def isolate_ep_era5(era5_data, var='lcc', domain=ep_domain_360, mode='mean'):
     """
     Isolates the EP region from larger era5 data for purposes of timeseries
     analysis over averaged quantities
@@ -1263,16 +1273,22 @@ def isolate_ep_era5(era5_data, var='lcc', domain=ep_domain_360):
     else:
         era5_ep = era5_ep.sel(lat=slice(*lat_bounds), 
                                    lon=slice(*lon_bounds))
-    return era5_ep.mean(dim=['lat', 'lon'])
+    if mode=='std':
+        return era5_ep.std(dim=['lat', 'lon'])
+    else:
+        return era5_ep.mean(dim=['lat', 'lon'])
 
 
-def isolate_ep_isccp(isccp_anom, var, domain=ep_domain_360):
+def isolate_ep_isccp(isccp_anom, var, domain=ep_domain_360, mode='mean'):
     """
     Returns mean of variable within isccp_anom in eastern pacific
     """
     data = isccp_anom.sel(lat=slice(*domain[:2]),
                           lon=slice(*domain[2:]))
-    return data[var].mean(dim=['lat', 'lon'])
+    if mode=='std':
+        return data[var].std(dim=['lat', 'lon'])
+    else:
+        return data[var].mean(dim=['lat', 'lon'])
 
 
 def convert_longitude(lon, to_360=True):
