@@ -300,7 +300,7 @@ def isolate_enso_idx(pc_enso, oni_idx, out='El Nino'):
 def main():
     # Files of intrest- ISCCP and ERA5
     global pc_1983, pred_vars, ccf_corr, fit1, fit2, lcc_anoms, raw_pred
-    global sep_predictors, lcc, isccp_anom, era5_data, best, ccf_pred
+    # global sep_predictors, lcc, isccp_anom, era5_data, best, ccf_pred
     isccp_file = 'era5_reanal/timeseries/isccp_anom.nc'
     file_era5 = 'era5_all/timeseries/era5_anom_all.nc'
        
@@ -384,7 +384,7 @@ def main():
     # this is the relationship betwen the CCFs and LCC
     lcc = raw_pred['lcc_SEP'].copy()
     raw_pred.drop('lcc_SEP', axis=1, inplace=True)
-    #raw_pred = raw_pred[['EIS', 'Cirrus Fraction', 
+    # raw_pred = raw_pred[['EIS', 'Cirrus Fraction', 
     #                     'Cold Advection', '700 hPa Relative Humidity']]
     fit2, _ = fit_cloud_data(lcc, raw_pred,
                                    normalize=False)

@@ -333,9 +333,21 @@ def main():
     # attribution analysis
     era5_states['cp_nino'][['eis', 'rh_700', 'cold_adv',
                             'sst', 'w_700', 'sst', 'speed']].\
-        to_netcdf('misc_data/composites/era5.nc')
+        to_netcdf('misc_data/composites/era5_cp.nc')
     isccp_states['cp_nino'][['high', 'sc_adj']].\
-        to_netcdf('misc_data/composites/cirrus.nc')
+        to_netcdf('misc_data/composites/cirrus_cp.nc')
+        
+    era5_states['ep_nino'][['eis', 'rh_700', 'cold_adv',
+                            'sst', 'w_700', 'sst', 'speed']].\
+        to_netcdf('misc_data/composites/era5_ep.nc')
+    isccp_states['ep_nino'][['high', 'sc_adj']].\
+        to_netcdf('misc_data/composites/cirrus_ep.nc')
+        
+    era5_states['nina'][['eis', 'rh_700', 'cold_adv',
+                            'sst', 'w_700', 'sst', 'speed']].\
+        to_netcdf('misc_data/composites/era5_la.nc')
+    isccp_states['nina'][['high', 'sc_adj']].\
+        to_netcdf('misc_data/composites/cirrus_la.nc')
     
     
 if __name__ == '__main__':

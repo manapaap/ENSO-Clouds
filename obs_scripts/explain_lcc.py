@@ -44,7 +44,7 @@ def plot_contributions(lcc_explained, lcc_change):
     # Add horizontal line at zero
     ax.axhline(0, color='gray', linewidth=0.8, linestyle='--', alpha=0.7)
     # Labels and styling
-    ax.set_ylabel('Change in Sc + St (%)', fontsize=12)
+    ax.set_ylabel('Change in SEP Sc + St (%)', fontsize=12)
     ax.set_ylim(bottom=min(lcc_merge.change.min() - 1, -1))
     # Add grid for readability
     ax.grid(axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
@@ -67,9 +67,9 @@ def main():
     ccf_data = pd.read_csv('misc_data/ccf_timeseries.csv')
     ccf_slopes = pd.read_csv('misc_data/ccf_slopes.csv', index_col=0)
     # load files- composite maps
-    ccf_comp = xr.load_dataset('misc_data/composites/era5.nc').\
+    ccf_comp = xr.load_dataset('misc_data/composites/era5_cp.nc').\
         drop_vars('pressure_level')
-    cloud_comp = xr.load_dataset('misc_data/composites/cirrus.nc')
+    cloud_comp = xr.load_dataset('misc_data/composites/cirrus_cp.nc')
     
     cp_lcc = share.isolate_ep_isccp(cloud_comp, 'sc_adj')
     cp_hcc = share.isolate_ep_isccp(cloud_comp, 'high')
@@ -131,17 +131,18 @@ def main():
     
     plot_contributions(lcc_explained, lcc_change)
     
-    # repeat with all points- this is also worse somehow
-    all_cp = {'sc_adj': float(cp_lcc),
-              'SST': float(cp_sst),
-              'EIS': float(cp_eis),
-              '700 hPa Relative Humidity': float(cp_rh700),
-              'Cirrus Fraction': float(cp_hcc),
-              'Cold Advection': float(cp_sstadv),
-              '10m Windspeed': float(cp_ws10),
-              '700 hPa Subsidence': float(cp_w700)}
-    all_order = pd.DataFrame(all_cp, index=['change']).T.drop('sc_adj')
-    lcc_exp_all = ccf_slopes['params'] * all_order['change']
+    if False:
+        # repeat with all points- this is also worse somehow
+        all_cp = {'sc_adj': float(cp_lcc),
+                  'SST': float(cp_sst),
+                  'EIS': float(cp_eis),
+                  '700 hPa Relative Humidity': float(cp_rh700),
+                  'Cirrus Fraction': float(cp_hcc),
+                  'Cold Advection': float(cp_sstadv),
+                  '10m Windspeed': float(cp_ws10),
+                  '700 hPa Subsidence': float(cp_w700)}
+        all_order = pd.DataFrame(all_cp, index=['change']).T.drop('sc_adj')
+        lcc_exp_all = ccf_slopes['params'] * all_order['change']
     
     if False:
         # repeat with data from the whole SEP
